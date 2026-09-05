@@ -1,9 +1,12 @@
 //! Life is Strange: Double Exposure (Chronos, UE 5.2.1).
 //!
 //! The camera patch is RESEARCH.md sections 1 and 2, byte for byte: the
-//! branch edit, cave A and cave B. The UI edits are section 9c-3.
+//! branch edit and cave A. The cine component's `Super::GetCameraView`
+//! call is left alone (2d): the game's only cine cameras are the main-menu
+//! and outfit-screen ones, which cave A widens like any other.
+//! The UI edits are section 9c-3.
 
-use crate::camera::{cave_a, cave_b};
+use crate::camera::cave_a;
 use crate::plan::{Plan, Site, Write, locate, rel32};
 use crate::scan::{Image, find_cave};
 use crate::ui_layout::{Edit, Field, NewValue, UiFix};
@@ -32,16 +35,7 @@ const GATE: Site = Site {
     ],
 };
 
-const CINE: Site = Site {
-    name: "cine Super::GetCameraView call (cave B site)",
-    sig: "E8 ?? ?? ?? ?? 4C 8B C7 0F 28 CE 48 8B CB E8",
-    expected: 0x4006578,
-    patched: &[],
-};
-/// The Super call's E8 within the CINE signature.
-const CINE_CALL_AT: u64 = 14;
-
-/// RESEARCH.md section 1: the branch edit, cave A and cave B.
+/// RESEARCH.md section 1: the branch edit and cave A.
 pub fn plan_double_exposure(img: &Image, upper: [u8; 4]) -> Result<Plan, String> {
     let mut notes = Vec::new();
     let mut writes = Vec::new();
@@ -71,10 +65,9 @@ pub fn plan_double_exposure(img: &Image, upper: [u8; 4]) -> Result<Plan, String>
     let mut site_a = vec![0xE8];
     site_a.extend_from_slice(&rel32(a, gate + 5)?.to_le_bytes());
     site_a.extend([0x66, 0x90]);
-    let a_len = blob_a.len();
     writes.push(Write {
         va: a,
-        expected: vec![0xCC; a_len],
+        expected: vec![0xCC; blob_a.len()],
         bytes: blob_a,
         what: format!("cave A: aspect-gated unconstrain, upper bound {:.4}", f32::from_le_bytes(upper)),
     });
@@ -85,34 +78,7 @@ pub fn plan_double_exposure(img: &Image, upper: [u8; 4]) -> Result<Plan, String>
         what: "GetCameraView flag copy -> call cave A".into(),
     });
 
-    // 2d: the cine component's Super::GetCameraView call goes through cave B,
-    // which re-asserts the constraint so loading views stay boxed.
-    let cine = locate(img, &CINE, &mut notes)?;
-    let call = cine + CINE_CALL_AT;
-    let call_bytes = img.read(call, 5).ok_or("cave B site is not readable")?;
-    if call_bytes[0] != 0xE8 {
-        return Err("cave B site: the Super call is not a direct call".into());
-    }
-    let old_disp = i32::from_le_bytes(call_bytes[1..5].try_into().unwrap());
-    let super_va = (call as i64 + 5 + old_disp as i64) as u64;
-    let b = find_cave(img, call, 18 + 8, &[(a, a_len)])
-        .ok_or("no int3 padding run large enough for cave B")?;
-    let blob_b = cave_b(rel32(super_va, b + 4 + 5)?);
-    let b_len = blob_b.len();
-    writes.push(Write {
-        va: b,
-        expected: vec![0xCC; b_len],
-        bytes: blob_b,
-        what: format!("cave B: cine views kept boxed, Super::GetCameraView at rva {super_va:#x}"),
-    });
-    writes.push(Write {
-        va: call + 1,
-        expected: call_bytes[1..5].to_vec(),
-        bytes: rel32(b, call + 5)?.to_le_bytes().to_vec(),
-        what: "cine Super::GetCameraView call -> cave B".into(),
-    });
-
-    notes.push(format!("cave A at rva {a:#x}, cave B at rva {b:#x}"));
+    notes.push(format!("cave A at rva {a:#x}"));
     Ok(Plan { writes, notes })
 }
 

@@ -21,7 +21,8 @@ const CINE: usize = 0x3000;
 const SUPER: usize = 0x3800;
 const CAVES: usize = 0x3900;
 
-/// One section holding the three stock sites and one int3 run.
+/// One section holding the two stock sites, the cine Super call (which
+/// must stay untouched), and one int3 run.
 fn synthetic() -> Vec<u8> {
     let mut d = vec![0x90u8; 0x4000];
     let put = |d: &mut Vec<u8>, at: usize, bytes: Vec<u8>| d[at..at + bytes.len()].copy_from_slice(&bytes);
@@ -49,10 +50,7 @@ fn plans_the_documented_patch_over_a_synthetic_image() {
 
     let axis = BASE + AXIS as u64;
     let gate = BASE + GATE as u64;
-    let call = BASE + CINE as u64 + 14;
     let cave_a = BASE + CAVES as u64;
-    let cave_b = cave_a + 40; // the rest of the same run, right after cave A
-    let super_va = BASE + SUPER as u64;
 
     let mut want = BTreeMap::new();
     want.insert(axis + 6, vec![0xFF]);
@@ -62,12 +60,10 @@ fn plans_the_documented_patch_over_a_synthetic_image() {
     site_a.extend_from_slice(&((cave_a as i64 - (gate as i64 + 5)) as i32).to_le_bytes());
     site_a.extend([0x66, 0x90]);
     want.insert(gate, site_a);
-    let mut blob_b = hex("4883EC28 E8");
-    blob_b.extend_from_slice(&((super_va as i64 - (cave_b as i64 + 9)) as i32).to_le_bytes());
-    blob_b.extend(hex("4883C428 804F4C01 C3"));
-    want.insert(cave_b, blob_b);
-    want.insert(call + 1, ((cave_b as i64 - (call as i64 + 5)) as i32).to_le_bytes().to_vec());
     assert_eq!(got, want);
+    // the cine Super call stays as it was (RESEARCH 2d)
+    assert_eq!(plan.writes.len(), 4);
+    assert!(!got.keys().any(|va| (BASE + CINE as u64..BASE + CINE as u64 + 19).contains(va)));
 
     // every expected byte really is there
     let img = image(&d);
@@ -109,8 +105,8 @@ fn refuses_an_unknown_build() {
 
 /// The stock executable, when this machine has it: the plan for 5120x2160
 /// must be exactly the diff between the stock file and the one the Python
-/// installer produced (captured on 2026-09-02), and must be found without
-/// scanning.
+/// installer produced (captured on 2026-09-02), less the cine-call reroute
+/// that build carried (RESEARCH 2d), and must be found without scanning.
 #[test]
 fn matches_the_reference_patch_on_the_real_executable() {
     // LIS_DE_STOCK_EXE names the stock executable; otherwise the game's own
@@ -134,9 +130,7 @@ fn matches_the_reference_patch_on_the_real_executable() {
     eprintln!("planned in {:?}: {:?}", started.elapsed(), plan.notes);
 
     let want: BTreeMap<u64, Vec<u8>> = [
-        (0x6b265b, "4883ec28e85c78d6034883c428804f4c01c3"),
         (0x6b7310, "0fb683b40200008b8bb002000081f90000e03f761281f9a3011840730a83e0fec74748398ee33fc3"),
-        (0x4006587, "d0c06afc"),
         (0x440b5c6, "ff"),
         (0x440b5cf, "ff"),
         (0x441ab4c, "e8bfc729fc6690"),
