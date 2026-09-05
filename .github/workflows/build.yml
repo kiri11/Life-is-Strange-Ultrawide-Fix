@@ -145,6 +145,33 @@ jobs:
           Compress-Archive -Path $root -DestinationPath 'LiS-Ultrawide-Fix-Windows.zip'
           Get-ChildItem -Recurse $root | Select-Object FullName, Length
 
+      # Windows Defender's cloud classifier has flagged a build of the
+      # installer before (an unsigned, statically linked executable that
+      # writes a DLL into another program's folder looks like a dropper to
+      # it). Scan the files that ship, with the latest signatures, and refuse
+      # to release a build a player's own Defender would quarantine. On a
+      # false positive, report the file at
+      # https://www.microsoft.com/en-us/wdsi/filesubmission and re-run.
+      - name: Scan the Windows archive with Defender
+        shell: pwsh
+        run: |
+          # Exit codes are read by hand below; do not let pwsh turn them into errors.
+          $PSNativeCommandUseErrorActionPreference = $false
+          $mp = Join-Path $env:ProgramFiles 'Windows Defender\MpCmdRun.exe'
+          & $mp -SignatureUpdate | Out-Host
+          if ($LASTEXITCODE -ne 0) { Write-Warning "signature update failed (exit $LASTEXITCODE); scanning with the runner's signatures" }
+          $status = Get-MpComputerStatus
+          Write-Host "antivirus signatures $($status.AntivirusSignatureVersion) from $($status.AntivirusSignatureLastUpdated)"
+          $bad = @()
+          foreach ($f in (Get-ChildItem -Recurse -File 'staging/LiS-Ultrawide-Fix-Windows') + (Get-Item 'LiS-Ultrawide-Fix-Windows.zip')) {
+            $out = & $mp -Scan -ScanType 3 -File $f.FullName -DisableRemediation 2>&1
+            $code = $LASTEXITCODE
+            Write-Host "$($f.FullName): exit $code"
+            # 0 is clean, 2 is a detection; anything else is the scanner failing
+            if ($code -ne 0) { $bad += $f.FullName; $out | Out-Host }
+          }
+          if ($bad) { throw "Defender flagged or could not scan: $($bad -join ', ')" }
+
       # The loader travels to the Linux job, whose installer embeds the same
       # bytes; the staged folder is available on pull requests too, so a build
       # can be tested before it ships.
