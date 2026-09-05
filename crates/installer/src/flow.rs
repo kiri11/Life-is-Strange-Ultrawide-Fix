@@ -192,6 +192,26 @@ struct Parts {
     sharpen: bool,
 }
 
+/// Recognize our files even when an installation is incomplete or outdated.
+/// A different mod's proxy DLL alone must not count as this fix.
+fn has_fix(game: &dyn Game, exe: &Path, engine_ini: Option<&Path>) -> bool {
+    let camera = loader_install::camera_paths(game, exe);
+    let mut backup = exe.as_os_str().to_os_string();
+    backup.push(".original");
+    if loader_install::is_our_dll(&camera.dll) || camera.ini.is_file() || camera.log.is_file() || Path::new(&backup).is_file() {
+        return true;
+    }
+    if let (Some(fix), Some(paks)) = (game.ui(), game.paks_dir(exe)) {
+        let paths = ui_layout::mod_paths(&paks, fix);
+        if paths.container().iter().any(|p| p.is_file()) || paths.record.is_file() || paks.join(format!("{}.utoc.original", fix.source)).is_file() {
+            return true;
+        }
+    }
+    engine_ini::engine_ini_path(game, Some(exe), engine_ini)
+        .and_then(|p| std::fs::read(p).ok())
+        .is_some_and(|bytes| String::from_utf8_lossy(&bytes).lines().any(|line| line.trim() == game.ini_markers().0))
+}
+
 fn run_inner(args: &Args, ui: &mut dyn Ui, out: &mut Out) -> R<i32> {
     if args.command == Command::Find {
         // every game the fix knows, installed or not: the front-end builds
@@ -231,8 +251,14 @@ fn run_inner(args: &Args, ui: &mut dyn Ui, out: &mut Out) -> R<i32> {
         out.line("  !! the game has been updated since this was installed - install again before playing.");
     }
 
-    let detected = display::detect_resolution();
-    let restore = args.command == Command::Restore;
+    let mut restore = args.command == Command::Restore;
+    if matches!(args.command, Command::Interactive | Command::Install) && !args.yes && has_fix(game, &exe, args.engine_ini.as_deref()) {
+        let items = vec!["Reinstall / change the fix's options".to_string(), "Remove the fix (restore)".to_string()];
+        restore = ui
+            .choose(&format!("The ultrawide fix is already installed for {}. What would you like to do?", game.title()), &items, Some(0))
+            .ok_or(Fail::Cancelled)? == 1;
+    }
+    let detected = if restore { None } else { display::detect_resolution() };
     let (width, height) = match (args.width, args.height) {
         (Some(w), Some(h)) => (w, h),
         _ if restore => detected.unwrap_or((1920, 1080)), // irrelevant when restoring
@@ -254,6 +280,10 @@ fn run_inner(args: &Args, ui: &mut dyn Ui, out: &mut Out) -> R<i32> {
 
     let mut parts = Parts { camera: !args.no_camera, ui: !args.no_ui, chromatic: !args.no_chromatic, sharpen: args.sharpen };
     if restore {
+        if args.command != Command::Restore {
+            // The menu removes the whole fix, regardless of install-only flags.
+            parts = Parts { camera: true, ui: true, chromatic: true, sharpen: true };
+        }
         parts.sharpen = true;
         return run_install(game, &exe, width, height, &parts, true, args.engine_ini.as_deref(), explicit, out);
     }
@@ -383,4 +413,97 @@ fn run_install(
     out.line(" Launch the game through Steam.");
     out.line(&"=".repeat(60));
     Ok(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use lis_ultrawide_core::games::double_exposure::DOUBLE_EXPOSURE;
+
+    struct Answers {
+        action: Option<usize>,
+        choices: usize,
+        questions: usize,
+    }
+
+    impl Ui for Answers {
+        fn choose(&mut self, title: &str, items: &[String], _: Option<usize>) -> Option<usize> {
+            assert!(title.contains("already installed"));
+            assert!(items[1].contains("restore"));
+            self.choices += 1;
+            self.action
+        }
+        fn ask_yes(&mut self, _: &str, _: bool) -> Option<bool> {
+            assert_eq!(self.action, Some(0), "restore must skip component questions");
+            self.questions += 1;
+            Some(self.questions == 3) // reinstall only the Engine.ini block
+        }
+        fn ask_text(&mut self, _: &str) -> Option<String> {
+            panic!("no path or resolution question expected")
+        }
+    }
+
+    #[test]
+    fn existing_fix_can_be_cancelled_reinstalled_or_restored() {
+        let game: &dyn Game = &DOUBLE_EXPOSURE;
+        let tmp = std::env::temp_dir().join(format!("lis-flow-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let exe = tmp.join(game.exe_relative());
+        std::fs::create_dir_all(exe.parent().unwrap()).unwrap();
+        std::fs::write(&exe, b"MZ").unwrap();
+        // An explicit non-Steam settings path prevents tests using a real prefix.
+        let ini = tmp.join("Engine.ini");
+        let mut args = crate::parse_args(&[]).unwrap();
+        args.exe = Some(exe.clone());
+        args.engine_ini = Some(ini.clone());
+        let camera = loader_install::camera_paths(game, &exe);
+        std::fs::write(&camera.dll, b"some other mod").unwrap();
+        assert!(!has_fix(game, &exe, Some(&ini)), "foreign DLL is not our fix");
+        let user = "[UserSettings]\nKeepMe=1\n";
+        let installed = format!("{user}\n{}", engine_ini::build_ini_block(game, 3440, 1440, true, false));
+        std::fs::write(&ini, &installed).unwrap();
+        assert!(has_fix(game, &exe, Some(&ini)), "settings-only installation");
+        let mut out = Out { lines: Vec::new() };
+        let mut answers = Answers { action: None, choices: 0, questions: 0 };
+        assert!(matches!(run_inner(&args, &mut answers, &mut out), Err(Fail::Cancelled)));
+        assert_eq!(std::fs::read_to_string(&ini).unwrap(), installed);
+        assert_eq!(answers.choices, 1);
+
+        args.width = Some(5120);
+        args.height = Some(2160);
+        answers = Answers { action: Some(0), choices: 0, questions: 0 };
+        assert!(matches!(run_inner(&args, &mut answers, &mut out), Ok(0)));
+        assert_eq!(answers.choices, 1);
+        assert_eq!(answers.questions, 4);
+        assert_eq!(std::fs::read_to_string(&ini).unwrap().matches(game.ini_markers().0).count(), 1);
+
+        // --yes remains unattended, even when a fix is already installed.
+        args.yes = true;
+        args.no_camera = true;
+        args.no_ui = true;
+        answers = Answers { action: None, choices: 0, questions: 0 };
+        assert!(matches!(run_inner(&args, &mut answers, &mut out), Ok(0)));
+        assert_eq!(answers.choices, 0);
+
+        // A partial UI install is removable even without the source containers.
+        let paks = game.paks_dir(&exe).unwrap();
+        let mp = ui_layout::mod_paths(&paks, game.ui().unwrap());
+        std::fs::create_dir_all(mp.pak.parent().unwrap()).unwrap();
+        std::fs::write(&mp.pak, b"partial mod").unwrap();
+        args.yes = false;
+        args.width = None;
+        args.height = None;
+        answers = Answers { action: Some(1), choices: 0, questions: 0 };
+        assert!(matches!(run_inner(&args, &mut answers, &mut out), Ok(0)));
+        assert_eq!(answers.choices, 1);
+        assert_eq!(answers.questions, 0);
+        assert_eq!(std::fs::read_to_string(&ini).unwrap(), user);
+        assert!(!mp.pak.exists());
+        assert_eq!(std::fs::read(&camera.dll).unwrap(), b"some other mod");
+        assert!(!has_fix(game, &exe, Some(&ini)));
+
+        std::fs::write(&camera.dll, loader_install::DLL_MARKER.encode_utf16().flat_map(u16::to_le_bytes).collect::<Vec<_>>()).unwrap();
+        assert!(has_fix(game, &exe, Some(&ini)), "old camera loader recognized without a shipped DLL");
+        std::fs::remove_dir_all(&tmp).unwrap();
+    }
 }

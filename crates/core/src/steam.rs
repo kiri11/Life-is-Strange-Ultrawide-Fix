@@ -70,6 +70,27 @@ pub fn normcase(p: &Path) -> String {
     if cfg!(windows) { s.replace('/', "\\").to_lowercase() } else { s.into_owned() }
 }
 
+/// Identity for discovery, resolving symlinks and (on Unix) bind-mount aliases.
+/// Keep the original path for use: its Steam library ancestry locates Proton.
+#[derive(Debug, PartialEq, Eq, Hash)]
+pub enum PathKey {
+    #[cfg(unix)]
+    File(u64, u64),
+    Path(String),
+}
+
+pub fn path_key(path: &Path) -> PathKey {
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::MetadataExt;
+        if let Ok(meta) = std::fs::metadata(path) {
+            return PathKey::File(meta.dev(), meta.ino());
+        }
+    }
+    let resolved = std::fs::canonicalize(path).or_else(|_| std::path::absolute(path)).unwrap_or_else(|_| path.to_path_buf());
+    PathKey::Path(normcase(&resolved))
+}
+
 /// `parent/name`, matched case-insensitively (Linux has `SteamApps` and `steamapps`).
 pub fn child(parent: &Path, name: &str) -> PathBuf {
     let direct = parent.join(name);
@@ -176,11 +197,11 @@ mod win {
     fn _unused(_: *mut c_void) {}
 }
 
-fn add(list: &mut Vec<PathBuf>, seen: &mut HashSet<String>, path: PathBuf) {
+fn add(list: &mut Vec<PathBuf>, seen: &mut HashSet<PathKey>, path: PathBuf) {
     if path.as_os_str().is_empty() || !path.is_dir() {
         return;
     }
-    if seen.insert(normcase(&path)) {
+    if seen.insert(path_key(&path)) {
         list.push(path);
     }
 }
@@ -226,7 +247,7 @@ pub fn installs() -> Vec<PathBuf> {
 /// Steam installations plus every library folder they have registered.
 pub fn libraries() -> Vec<PathBuf> {
     let mut libraries = installs();
-    let mut seen: HashSet<String> = libraries.iter().map(|p| normcase(p)).collect();
+    let mut seen: HashSet<PathKey> = libraries.iter().map(|p| path_key(p)).collect();
     for install in libraries.clone() {
         let vdf = child(&install, "steamapps").join("libraryfolders.vdf");
         let Ok(text) = std::fs::read_to_string(&vdf) else { continue };
