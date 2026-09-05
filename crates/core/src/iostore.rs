@@ -1,7 +1,8 @@
 //! IoStore containers: reading `.utoc`/`.ucas` (header, chunk table,
 //! compression blocks, plaintext directory index) and writing a small
-//! standalone container (RESEARCH.md section 12): the TOC's perfect hash,
-//! `FIoContainerHeader` version 2, the directory index and a stub `.pak`.
+//! standalone container (RESEARCH.md sections 12 and 13i): the TOC's
+//! perfect hash, `FIoContainerHeader` versions 2 and 4, the directory index
+//! and a stub `.pak`.
 //!
 //! Two pieces had to be recovered from the shipped containers rather than
 //! looked up:
@@ -13,7 +14,11 @@
 //!   of pakchunk0 and of a third-party mod container.
 //! * `FIoContainerHeader` version 2 - package ids, then one 24-byte store
 //!   entry each (export count, bundle count, and two `{count, offset-from-here}`
-//!   array views), with the array data following the fixed block.
+//!   array views), with the array data following the fixed block. Version 3
+//!   dropped the two counts (16-byte entries) and version 4 appended a soft
+//!   package reference table, empty in the game's own container; TOC
+//!   version 8 shrank the per-chunk meta from a 32-byte hash plus flags to a
+//!   20-byte hash, flags and padding (24 bytes).
 //!
 //! Everything is written uncompressed: compression only pays for size, the
 //! container is ~120 KB, and it keeps the writer free of Oodle.
@@ -444,6 +449,8 @@ fn try_perfect_hash(chunk_ids: &[[u8; 12]], seed_count: usize) -> Option<(Vec<us
 /// `FFilePackageStoreEntry` - what the loader needs to know about a package.
 #[derive(Debug, Clone, PartialEq)]
 pub struct StoreEntry {
+    /// Header version 2 only; zero from version 3 on, where the entry has
+    /// no counts.
     pub exports: i32,
     pub bundles: i32,
     /// imported package ids
@@ -452,8 +459,17 @@ pub struct StoreEntry {
     pub shader_hashes: Vec<[u8; 20]>,
 }
 
+/// Bytes per store entry: the counts went away with version 3.
+fn store_entry_size(version: u32) -> usize {
+    if version >= 3 { 16 } else { 24 }
+}
+
 /// -> (container id, package id -> entry) from a shipped container's header.
+/// `version` is 2 (UE 5.2) or 4 (UE 5.4 and 5.5).
 pub fn parse_container_header(data: &[u8], version: u32) -> Result<(u64, BTreeMap<u64, StoreEntry>), String> {
+    if !matches!(version, 2 | 4) {
+        return Err(format!("container header version {version} is not one the fix writes"));
+    }
     if data.len() < 20 {
         return Err("container header too short".into());
     }
@@ -477,16 +493,21 @@ pub fn parse_container_header(data: &[u8], version: u32) -> Result<(u64, BTreeMa
     let size = u32_le(data, p) as usize;
     p += 4;
     let base = p;
-    if base + size > data.len() || 24 * count > size {
+    let stride = store_entry_size(version);
+    if base + size > data.len() || stride * count > size {
         return Err("store entries run past the end of the header".into());
     }
     let mut entries = BTreeMap::new();
     for (k, pid) in package_ids.iter().enumerate() {
-        let at = base + 24 * k;
-        let exports = u32_le(data, at) as i32;
-        let bundles = u32_le(data, at + 4) as i32;
-        let imports = read_array(data, at + 8, 8)?.chunks(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
-        let shader_hashes = read_array(data, at + 16, 20)?.chunks(20).map(|c| c.try_into().unwrap()).collect();
+        let mut at = base + stride * k;
+        let (mut exports, mut bundles) = (0, 0);
+        if stride == 24 {
+            exports = u32_le(data, at) as i32;
+            bundles = u32_le(data, at + 4) as i32;
+            at += 8;
+        }
+        let imports = read_array(data, at, 8)?.chunks(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
+        let shader_hashes = read_array(data, at + 8, 20)?.chunks(20).map(|c| c.try_into().unwrap()).collect();
         entries.insert(*pid, StoreEntry { exports, bundles, imports, shader_hashes });
     }
     Ok((container_id, entries))
@@ -507,15 +528,20 @@ fn read_array(data: &[u8], at: usize, stride: usize) -> Result<&[u8], String> {
     data.get(start..start + count as usize * stride).ok_or_else(|| "array view runs past the end of the header".into())
 }
 
-/// The chunk bytes for `entries` (package id -> entry).
+/// The chunk bytes for `entries` (package id -> entry), in header `version`
+/// 2 or 4.
 pub fn build_container_header(container_id: u64, entries: &BTreeMap<u64, StoreEntry>, version: u32) -> Vec<u8> {
     // BTreeMap iterates in sorted order: the loader binary-searches these
-    let mut fixed = vec![0u8; 24 * entries.len()];
+    let stride = store_entry_size(version);
+    let mut fixed = vec![0u8; stride * entries.len()];
     let mut trailing: Vec<u8> = Vec::new();
     for (k, e) in entries.values().enumerate() {
-        let at = 24 * k;
-        fixed[at..at + 4].copy_from_slice(&e.exports.to_le_bytes());
-        fixed[at + 4..at + 8].copy_from_slice(&e.bundles.to_le_bytes());
+        let mut at = stride * k;
+        if stride == 24 {
+            fixed[at..at + 4].copy_from_slice(&e.exports.to_le_bytes());
+            fixed[at + 4..at + 8].copy_from_slice(&e.bundles.to_le_bytes());
+            at += 8;
+        }
         // offset is measured from the field itself, and the data sits after
         // the fixed block - which is what makes it a forward offset here.
         let mut view = |offset_at: usize, count: usize, bytes: Vec<u8>| {
@@ -525,8 +551,8 @@ pub fn build_container_header(container_id: u64, entries: &BTreeMap<u64, StoreEn
             fixed[offset_at + 4..offset_at + 8].copy_from_slice(&offset.to_le_bytes());
             trailing.extend(bytes);
         };
-        view(at + 8, e.imports.len(), e.imports.iter().flat_map(|v| v.to_le_bytes()).collect());
-        view(at + 16, e.shader_hashes.len(), e.shader_hashes.iter().flatten().copied().collect());
+        view(at, e.imports.len(), e.imports.iter().flat_map(|v| v.to_le_bytes()).collect());
+        view(at + 8, e.shader_hashes.len(), e.shader_hashes.iter().flatten().copied().collect());
     }
     let mut out = Vec::new();
     out.extend_from_slice(&CONTAINER_HEADER_MAGIC.to_le_bytes());
@@ -539,9 +565,15 @@ pub fn build_container_header(container_id: u64, entries: &BTreeMap<u64, StoreEn
     out.extend_from_slice(&((fixed.len() + trailing.len()) as u32).to_le_bytes());
     out.extend(fixed);
     out.extend(trailing);
-    // optional-segment package ids, their store entries, the redirect name map
-    // and the localized-package table - all empty here, as in a mod container.
+    // optional-segment package ids, their store entries, the redirect name map,
+    // the localized-package table and the redirects - all empty here, as in
+    // a mod container.
     out.extend_from_slice(&[0u8; 20]);
+    if version >= 4 {
+        // bContainsSoftPackageReferences = false: the game's own header
+        // carries none either (RESEARCH 13i).
+        out.extend_from_slice(&[0u8; 4]);
+    }
     out
 }
 
@@ -646,7 +678,8 @@ pub struct Chunk {
 }
 
 /// The bytes of `<name>.utoc` and `<name>.ucas` for `chunks`, in whatever
-/// order; the perfect hash decides where each one lands.
+/// order; the perfect hash decides where each one lands. `toc_version` is 5
+/// (UE 5.2) or 8 (UE 5.5); the two differ only in the per-chunk meta.
 pub fn build_container(mount_point: &str, chunks: &[Chunk], container_id: u64, toc_version: u8) -> Result<(Vec<u8>, Vec<u8>), String> {
     let chunk_ids: Vec<[u8; 12]> = chunks.iter().map(|c| c.id).collect();
     let (order, seeds) = build_perfect_hash(&chunk_ids)?;
@@ -718,9 +751,13 @@ pub fn build_container(mount_point: &str, chunks: &[Chunk], container_id: u64, t
     method_name.resize(32, 0);
     out.extend(method_name);
     out.extend(&directory);
+    // FIoStoreTocEntryMeta: the chunk hash and a flags byte (0: not
+    // compressed). Up to version 7 the hash field is 32 bytes with the
+    // 20-byte BLAKE3 in front; version 8 keeps the 20 bytes and pads to 24.
+    let pad = if toc_version >= 8 { 3 } else { 12 };
     for &c in &order {
         out.extend(hash::blake3(&chunks[c].data, 20));
-        out.extend([0u8; 13]);
+        out.extend(vec![0u8; pad + 1]);
     }
     Ok((out, ucas))
 }
@@ -795,7 +832,33 @@ mod tests {
         let (id, back) = parse_container_header(&data, 2).unwrap();
         assert_eq!(id, 0xABCD);
         assert_eq!(back, entries);
-        assert!(parse_container_header(&data, 3).is_err());
+        assert!(parse_container_header(&data, 4).is_err());
+
+        // version 4: no counts, and the empty soft-reference table at the end
+        for e in entries.values_mut() {
+            e.exports = 0;
+            e.bundles = 0;
+        }
+        let data4 = build_container_header(0xABCD, &entries, 4);
+        assert_eq!(data4.len(), data.len() - 2 * 8 + 4);
+        assert!(data4.ends_with(&[0u8; 24]));
+        let (id, back) = parse_container_header(&data4, 4).unwrap();
+        assert_eq!(id, 0xABCD);
+        assert_eq!(back, entries);
+        assert!(parse_container_header(&data4, 2).is_err());
+        assert!(parse_container_header(&data4, 3).is_err());
+    }
+
+    #[test]
+    fn toc_meta_follows_the_version() {
+        let chunks = vec![Chunk { id: package_data_chunk_id(1, 0), data: vec![7; 10], path: None }];
+        let (v5, _) = build_container("../../../X/Content/", &chunks, 1, 5).unwrap();
+        let (v8, _) = build_container("../../../X/Content/", &chunks, 1, 8).unwrap();
+        assert_eq!(v5.len() - v8.len(), 33 - 24);
+        assert_eq!(v5[0x10], 5);
+        assert_eq!(v5[0x11..v5.len() - 33], v8[0x11..v8.len() - 24]);
+        assert_eq!(v5[v5.len() - 33..v5.len() - 13], v8[v8.len() - 24..v8.len() - 4]);
+        assert_eq!(v8[0x10], 8);
     }
 
     #[test]

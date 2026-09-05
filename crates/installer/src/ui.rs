@@ -17,6 +17,7 @@ pub const PRESETS: &[(&str, u32, u32)] = &[
     ("7680x2160 (32:9 Super Ultrawide)", 7680, 2160),
     ("3840x1200 (32:10)", 3840, 1200),
     ("2560x1600 (16:10)", 2560, 1600),
+    ("1280x800 (16:10 Steam Deck)", 1280, 800),
 ];
 
 /// A question's answer, or None when the user cancelled (end of input, a

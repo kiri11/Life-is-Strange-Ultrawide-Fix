@@ -1,6 +1,6 @@
 [package]
 name = "lis-ultrawide-loader"
-description = "Ultrawide camera fix for Life is Strange: Double Exposure, applied in memory when the game starts"
+description = "Ultrawide camera fix for Life is Strange: Double Exposure and Reunion, applied in memory when the game starts"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true

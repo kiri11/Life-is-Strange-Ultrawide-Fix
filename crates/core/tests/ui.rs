@@ -3,8 +3,9 @@
 //! captured from the Python implementation this replaced, on the build of
 //! the game installed on 2026-09-02; a game update changes them.
 //!
-//! `LIS_DE_PAKS` names the game's `Content/Paks` folder; otherwise the
-//! developer machine's path is tried, and the tests skip if it is absent.
+//! `LIS_DE_PAKS` and `LIS_REUNION_PAKS` name the games' `Content/Paks`
+//! folders; otherwise the developer machine's paths are tried, and the
+//! tests skip if they are absent.
 //! `LIS_DE_UI_REFERENCE` names a folder holding a `LiSUltrawideUI_P.utoc`,
 //! `.ucas` and `.pak` the Python writer produced for 5120x2160; when set,
 //! the Rust writer's output must equal it exactly.
@@ -13,23 +14,34 @@ use std::path::PathBuf;
 
 use lis_ultrawide_core::games::Game;
 use lis_ultrawide_core::games::double_exposure::DOUBLE_EXPOSURE;
+use lis_ultrawide_core::games::reunion::REUNION;
+use std::collections::BTreeMap;
+
 use lis_ultrawide_core::iostore::{
-    CHUNK_CONTAINER_HEADER, Toc, build_container_header, load_script_objects, lookup, package_id_of, parse_container_header,
+    CHUNK_CONTAINER_HEADER, StoreEntry, Toc, build_container_header, load_script_objects, lookup, package_id_of,
+    parse_container_header,
 };
 use lis_ultrawide_core::ui_layout::{build_mod, design_space, slot_payload};
-use lis_ultrawide_core::zen::ZenPackage;
+use lis_ultrawide_core::unver::Slot;
+use lis_ultrawide_core::zen::{ScriptObjects, Summary, ZenPackage};
 use lis_ultrawide_core::{hash, to_hex};
 
-fn paks() -> Option<PathBuf> {
-    let p = std::env::var("LIS_DE_PAKS")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| PathBuf::from(r"D:\SteamLibrary\steamapps\common\LifeIsStrangeDoubleExposure\Chronos\Content\Paks"));
+fn game_paks(var: &str, default: &str) -> Option<PathBuf> {
+    let p = std::env::var(var).map(PathBuf::from).unwrap_or_else(|_| PathBuf::from(default));
     if p.join("pakchunk0-Windows.utoc").is_file() {
         Some(p)
     } else {
-        eprintln!("skipped: no game data at {} (set LIS_DE_PAKS)", p.display());
+        eprintln!("skipped: no game data at {} (set {var})", p.display());
         None
     }
+}
+
+fn paks() -> Option<PathBuf> {
+    game_paks("LIS_DE_PAKS", r"D:\SteamLibrary\steamapps\common\LifeIsStrangeDoubleExposure\Chronos\Content\Paks")
+}
+
+fn reunion_paks() -> Option<PathBuf> {
+    game_paks("LIS_REUNION_PAKS", r"D:\SteamLibrary\steamapps\common\LifeisStrangeReunion\Iris\Content\Paks")
 }
 
 struct SlotRef {
@@ -136,7 +148,15 @@ fn reads_the_games_ui_packages_as_the_python_did() {
     assert_eq!(build_container_header(cid, &entries, 2), header);
     eprintln!("container header round-tripped in {:?}", started.elapsed());
 
-    for p in PACKAGES {
+    check_packages(&mut toc, &entries, &so, Summary::Ue52, PACKAGES);
+    eprintln!("packages checked in {:?}", started.elapsed());
+}
+
+/// Every package reads at the recorded size and hash, parses to the
+/// recorded exports, and every slot the edits touch decodes to the
+/// recorded values with the float to edit where it was recorded.
+fn check_packages(toc: &mut Toc, entries: &BTreeMap<u64, StoreEntry>, so: &ScriptObjects, summary: Summary, packages: &[PkgRef]) {
+    for p in packages {
         let idx = toc.index[p.path];
         assert_eq!(idx, p.index, "{}", p.path);
         assert_eq!(to_hex(&toc.chunk_ids[idx]), p.chunk);
@@ -146,11 +166,11 @@ fn reads_the_games_ui_packages_as_the_python_did() {
         let e = &entries[&package_id_of(&toc.chunk_ids[idx])];
         assert_eq!((e.exports, e.bundles, e.imports.len()), p.entry);
         assert!(e.shader_hashes.is_empty());
-        let pkg = ZenPackage::parse(&data).unwrap();
+        let pkg = ZenPackage::parse(&data, summary).unwrap();
         assert_eq!(pkg.exports.len(), p.exports);
         assert_eq!(pkg.name, p.name);
         for s in p.slots {
-            let (export, slot, base, payload) = slot_payload(&pkg, s.widget, &so).unwrap_or_else(|| panic!("{}: {}", p.path, s.widget));
+            let (export, slot, base, payload) = slot_payload(&pkg, s.widget, so).unwrap_or_else(|| panic!("{}: {}", p.path, s.widget));
             assert_eq!(export, s.export, "{}", s.widget);
             assert_eq!(base, s.base, "{}", s.widget);
             assert_eq!(payload.len(), s.payload_len, "{}", s.widget);
@@ -165,7 +185,155 @@ fn reads_the_games_ui_packages_as_the_python_did() {
             assert_eq!(at, s.float_at, "{}", s.widget);
         }
     }
+}
+
+const REUNION_PACKAGES: &[PkgRef] = &[
+    PkgRef { path: "Iris/Content/UI/BP/BP_IrisUIWindowManager.uasset", index: 23182, chunk: "7c7c9cd6d0bac7ed00000001", size: 13028, sha256: "eaff8169e28ebf3a2f37f614a81ccab6f1a45f33207fe2da544e68ca573d0bdd", exports: 26, name: "/Game/UI/BP/BP_IrisUIWindowManager", entry: (0, 0, 4),
+        slots: &[slot!("WindowParent", 8, 11699, 78, 8, [0.0, 0.0, 3840.0, 2160.0], (0.5, 0.5), (0.5, 0.5), (0.5, 0.5), 16, 4)] },
+    PkgRef { path: "Iris/Content/UI/BP/Window/BP_PauseWindow.uasset", index: 57453, chunk: "44228dddea71f6a700000001", size: 9258, sha256: "8f229e74ae4ef3dab3485095c4849e6a5d6ac70bfbebe1fd35014e508c74c9e6", exports: 40, name: "/Game/UI/BP/Window/BP_PauseWindow", entry: (0, 0, 9),
+        slots: &[slot!("Pause", 3, 7002, 54, 10, [1920.0, 590.0, 300.0, 80.0], (0.0, 0.0), (0.0, 0.0), (0.5, 0.0), 25, 12)] },
+    PkgRef { path: "Iris/Content/UI/BP/Window/BP_SettingsWindow.uasset", index: 63429, chunk: "ee780ccda0ebf22300000001", size: 13011, sha256: "13f4f74b7e6ba8aa0769e80407da02d2239adf082e7b1316b5b81890fb20508b", exports: 60, name: "/Game/UI/BP/Window/BP_SettingsWindow", entry: (0, 0, 16),
+        slots: &[slot!("Background", 19, 10888, 28, 8, [0.0, 0.0, 3840.0, 2162.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 38, 35)] },
+    PkgRef { path: "Iris/Content/UI/BP/Window/BP_SaveSelectWindow.uasset", index: 8853, chunk: "b84702f3604ed2ca00000001", size: 11975, sha256: "ebbaa641f4812201cff22e876672349bdd8e9d04193a361de5018b2f9790205b", exports: 54, name: "/Game/UI/BP/Window/BP_SaveSelectWindow", entry: (0, 0, 10),
+        slots: &[slot!("D9Image", 16, 9350, 28, 8, [0.0, 0.0, 3840.0, 2160.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 32, 29)] },
+    PkgRef { path: "Iris/Content/UI/BP/Window/BP_SquareEnixAccountWindow.uasset", index: 43067, chunk: "d5be7f86b2db437f00000001", size: 46449, sha256: "2a54acd02cdf781ca28f133a950d6c01d8e52878eb6390522c3c3e19c2739857", exports: 226, name: "/Game/UI/BP/Window/BP_SquareEnixAccountWindow", entry: (0, 0, 13),
+        slots: &[
+            slot!("CanvasPanel_Background", 45, 33652, 28, 8, [0.0, 0.0, 3840.0, 2162.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 17, 49),
+            slot!("WidgetSwitcher_CurrentView", 46, 33680, 28, 8, [0.0, 0.0, 3840.0, 2162.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 218, 49),
+        ] },
+    PkgRef { path: "Iris/Content/UI/BP/Window/BP_OutfitWindow.uasset", index: 47397, chunk: "39f26d001816402200000001", size: 4151, sha256: "39a3a10dea9d625a0a33b3c6abba5ce58717237a0e4c8dd7c9e70127985d3665", exports: 16, name: "/Game/UI/BP/Window/BP_OutfitWindow", entry: (0, 0, 8),
+        slots: &[slot!("Background", 5, 3426, 28, 8, [0.0, 0.0, 3840.0, 2162.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 12, 11)] },
+    PkgRef { path: "Iris/Content/UI/BP/Window/BP_MontageWindow.uasset", index: 61022, chunk: "fbf2887be131aac800000001", size: 19588, sha256: "0deb19e914eca7c69a6301ba2905a9d5c271c2389c86fe804dc3d179ac2acf60", exports: 94, name: "/Game/UI/BP/Window/BP_MontageWindow", entry: (0, 0, 19),
+        slots: &[slot!("Background", 31, 15598, 29, 8, [0.0, 0.0, 3840.0, 2160.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 61, 58)] },
+    PkgRef { path: "Iris/Content/UI/BP/Window/BP_FRPosterWindow.uasset", index: 70012, chunk: "bf3410da04cb45fe00000001", size: 8704, sha256: "fbd25fcea37bf4e433b30758a084cb679dafe49d2713b62a85c50f91b70a39b4", exports: 42, name: "/Game/UI/BP/Window/BP_FRPosterWindow", entry: (0, 0, 10),
+        slots: &[
+            slot!("D9Image", 12, 7400, 28, 8, [0.0, 0.0, 3840.0, 2160.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 23, 22),
+            slot!("UpButton", 15, 7542, 28, 8, [1870.0, 84.0, 100.0, 100.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 4, 22),
+            slot!("DownButton", 13, 7428, 28, 8, [1870.0, 1576.0, 100.0, 100.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 17, 22),
+        ] },
+    PkgRef { path: "Iris/Content/UI/BP/Controls/Settings/BP_UISettings.uasset", index: 43040, chunk: "a6626d04d8585e2300000001", size: 13880, sha256: "7642dffde08773ab0a2cb8886039c8fad3df1200332ef57bd1d06bfa485c2bfe", exports: 48, name: "/Game/UI/BP/Controls/Settings/BP_UISettings", entry: (0, 0, 7),
+        slots: &[slot!("Buttons", 14, 9014, 29, 8, [0.0, 0.0, 3840.0, 2160.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 16, 23)] },
+    PkgRef { path: "Iris/Content/UI/BP/Controls/Settings/BP_OutfitSettings.uasset", index: 20010, chunk: "9f9a08c8419418fe00000001", size: 5283, sha256: "a702256f382d272eefe5691fc930f2de6873800625b72e52989081447e5eaa8e", exports: 22, name: "/Game/UI/BP/Controls/Settings/BP_OutfitSettings", entry: (0, 0, 2),
+        slots: &[slot!("Buttons", 4, 3960, 29, 8, [0.0, 0.0, 3840.0, 2160.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 6, 10)] },
+    PkgRef { path: "Iris/Content/UI/BP/Controls/PlayerMenu/Collectibles/BP_CollectiblePosterUI.uasset", index: 9049, chunk: "d598d203f5b3cde700000001", size: 15429, sha256: "dc0009e1dfb92cb7721710e5661b94e4ef1087b256996b1eedc4cab5d6a9d555", exports: 82, name: "/Game/UI/BP/Controls/PlayerMenu/Collectibles/BP_CollectiblePosterUI", entry: (0, 0, 6),
+        slots: &[slot!("D9Image", 28, 12581, 28, 8, [0.0, 0.0, 3840.0, 2160.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 44, 41)] },
+    PkgRef { path: "Iris/Content/UI/BP/Controls/PlayerMenu/Collectibles/BP_ChloePhotoPosterUI.uasset", index: 37806, chunk: "3d4a4bf259cd753d00000001", size: 17838, sha256: "c8cdadc6d1389bf563b7e7fb02107429f3eda04e1ff5beb3545f430d4b1ac0fd", exports: 94, name: "/Game/UI/BP/Controls/PlayerMenu/Collectibles/BP_ChloePhotoPosterUI", entry: (0, 0, 9),
+        slots: &[
+            slot!("D9Image", 34, 14544, 28, 8, [0.0, 0.0, 3840.0, 2160.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 55, 52),
+            slot!("UpButton", 37, 14674, 28, 8, [1870.0, 242.0, 100.0, 100.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 3, 52),
+            slot!("DownButton", 35, 14572, 28, 8, [1870.0, 1250.0, 100.0, 100.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 39, 52),
+        ] },
+    PkgRef { path: "Iris/Content/UI/BP/Controls/PlayerMenu/Collectibles/BP_IrisPhotoPosterUI.uasset", index: 8435, chunk: "9b481604c122c05900000001", size: 18209, sha256: "cd8b6767872a6fe80ad8c773fab3b58e9d4535d0f64af940535e91cd573f8054", exports: 96, name: "/Game/UI/BP/Controls/PlayerMenu/Collectibles/BP_IrisPhotoPosterUI", entry: (0, 0, 9),
+        slots: &[
+            slot!("D9Image", 35, 14871, 28, 8, [0.0, 0.0, 3840.0, 2160.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 56, 53),
+            slot!("UpButton", 38, 15001, 28, 8, [1870.0, 242.0, 100.0, 100.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 3, 53),
+            slot!("DownButton", 36, 14899, 28, 8, [1870.0, 1250.0, 100.0, 100.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 40, 53),
+        ] },
+    PkgRef { path: "Iris/Content/UI/BP/Window/BP_ObjectInspectWindow.uasset", index: 49149, chunk: "20ec5c61e967133b00000001", size: 12283, sha256: "1a6ab89bf8d75518b83c3640c93640097f57ae2c721e6eb8c3483d02bbaa8551", exports: 50, name: "/Game/UI/BP/Window/BP_ObjectInspectWindow", entry: (0, 0, 10),
+        slots: &[
+            slot!("UpButton", 21, 8998, 28, 8, [1870.0, 242.0, 100.0, 100.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 4, 34),
+            slot!("DownButton", 17, 8801, 28, 8, [1870.0, 1250.0, 100.0, 100.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 27, 34),
+        ] },
+    PkgRef { path: "Iris/Content/UI/BP/Window/BP_MainMenuWindow.uasset", index: 60379, chunk: "26f89c0653e4127600000001", size: 10977, sha256: "29e3a4311b824f4b024466b06216be3664dcca0c2436ebe150d9f90cc483a9f9", exports: 52, name: "/Game/UI/BP/Window/BP_MainMenuWindow", entry: (0, 0, 8),
+        slots: &[
+            slot!("MainButtons", 7, 8407, 29, 8, [220.0, 760.0, 100.0, 100.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 19, 30),
+            slot!("D9Image", 9, 8465, 29, 8, [184.0, 262.0, 100.0, 100.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 32, 30),
+            slot!("D9TextBlock", 8, 8436, 29, 8, [220.0, 400.0, 100.0, 100.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 38, 30),
+            slot!("GamerTag", 12, 8619, 84, 9, [220.0, -240.0, 628.0, 0.0], (0.0, 1.0), (0.0, 1.0), (0.0, 1.0), 2, 31),
+            slot!("InfocastPanel", 10, 8494, 86, 8, [-220.0, -140.0, 2647.0, 322.0], (1.0, 1.0), (1.0, 1.0), (1.0, 1.0), 29, 31),
+        ] },
+    PkgRef { path: "Iris/Content/UI/BP/Window/BP_TitleWindow.uasset", index: 9432, chunk: "5e84e8a96ee85bf200000001", size: 3771, sha256: "c9cc3ed06dd17e3ce617a0a3933d9889c5bc4e351d8e8c21ce840474c5e52c27", exports: 12, name: "/Game/UI/BP/Window/BP_TitleWindow", entry: (0, 0, 8),
+        slots: &[
+            slot!("GamerTag", 5, 3156, 84, 9, [220.0, -100.0, 628.0, 0.0], (0.0, 1.0), (0.0, 1.0), (0.0, 1.0), 1, 9),
+            slot!("PressAnyKey", 6, 3240, 80, 9, [220.0, 12.0, 0.0, 0.0], (0.0, 1.0), (0.0, 1.0), (0.0, 1.0), 10, 9),
+        ] },
+];
+
+/// Reunion (RESEARCH 13i): TOC version 8, container header version 4, the
+/// UE 5.3+ package summary. The values were captured on 2026-09-04 from the
+/// build installed then. The mod container is built for 5120x2160, written
+/// to a temporary folder, and read back through the container reader: every
+/// edited float must come back changed and every other byte of each package
+/// unchanged.
+#[test]
+fn reads_and_rewrites_reunions_ui_packages() {
+    let Some(paks) = reunion_paks() else { return };
+    let started = std::time::Instant::now();
+    let game: &dyn Game = &REUNION;
+    let ui = game.ui().unwrap();
+    let so = load_script_objects(&paks.join("global.utoc")).unwrap();
+    assert_eq!(so.len(), 47561);
+    assert_eq!(so.get(&5730563978521807506).map(String::as_str), Some("/Script/UMG.CanvasPanelSlot"));
+
+    let mut toc = Toc::open(&paks.join("pakchunk0-Windows.utoc")).unwrap();
+    assert_eq!(toc.version, 8);
+    assert_eq!(toc.entries(), 83707);
+    assert_eq!(toc.blocks.len(), 867741);
+    assert_eq!(toc.methods, vec!["None".to_string(), "Oodle".to_string()]);
+    assert_eq!(toc.index.len(), 78882);
+    assert_eq!(toc.seeds.len(), 41854);
+    assert_eq!(toc.unhashed_count, 0);
+    assert_eq!(toc.flags, 9);
+    eprintln!("pakchunk0 toc in {:?}", started.elapsed());
+
+    let h = toc.find_type(CHUNK_CONTAINER_HEADER).unwrap();
+    assert_eq!(h, 72220);
+    let header = toc.read(h).unwrap();
+    assert_eq!(header.len(), 2831680);
+    assert_eq!(to_hex(&hash::sha256(&header)), "e53808be9d9826556a5826e5a13983df4853436e74c2df95b52b6ff25064dee2");
+    let (cid, entries) = parse_container_header(&header, 4).unwrap();
+    assert_eq!(cid, 0x81e4dd3d9595e447);
+    assert_eq!(entries.len(), 59688);
+    assert_eq!(build_container_header(cid, &entries, 4), header);
+    eprintln!("container header round-tripped in {:?}", started.elapsed());
+
+    check_packages(&mut toc, &entries, &so, Summary::Ue53, REUNION_PACKAGES);
     eprintln!("packages checked in {:?}", started.elapsed());
+
+    let (dw, _) = design_space(5120, 2160, ui.design);
+    let mut lines = Vec::new();
+    let built = build_mod(&paks, ui, dw, &so, &mut lines).unwrap();
+    for l in &lines {
+        eprintln!("{l}");
+    }
+    assert_eq!((built.applied, built.failed), (16, 0));
+
+    let dir = std::env::temp_dir().join(format!("lis-reunion-ui-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let base = dir.join(ui.mod_name);
+    std::fs::write(base.with_extension("utoc"), &built.utoc).unwrap();
+    std::fs::write(base.with_extension("ucas"), &built.ucas).unwrap();
+    let mut mod_toc = Toc::open(&base.with_extension("utoc")).unwrap();
+    assert_eq!(mod_toc.version, 8);
+    assert_eq!(mod_toc.entries(), 17);
+    assert_eq!(mod_toc.index.len(), 16);
+    let mh = mod_toc.find_type(CHUNK_CONTAINER_HEADER).unwrap();
+    let (_, mod_entries) = parse_container_header(&mod_toc.read(mh).unwrap(), 4).unwrap();
+    assert_eq!(mod_entries.len(), 16);
+    for p in REUNION_PACKAGES {
+        let stock = toc.read(toc.index[p.path]).unwrap();
+        let idx = mod_toc.index[p.path];
+        let data = mod_toc.read(idx).unwrap();
+        assert_eq!(data.len(), stock.len(), "{}", p.path);
+        assert_eq!(mod_entries[&package_id_of(&mod_toc.chunk_ids[idx])], entries[&package_id_of(&toc.chunk_ids[toc.index[p.path]])]);
+        let pkg = ZenPackage::parse(&data, Summary::Ue53).unwrap();
+        let mut expected = stock.clone();
+        for s in p.slots {
+            let (_, slot, base, _) = slot_payload(&pkg, s.widget, &so).unwrap();
+            assert_eq!(base, s.base);
+            let edit = ui.edits.iter().find(|e| p.path.ends_with(e.package) && e.widget == s.widget).unwrap();
+            let want = edit.new.apply(dw, ui.design) as f32;
+            assert_eq!(slot.offsets[edit.field as usize], want, "{}: {}", p.path, s.widget);
+            let stock_slot: Slot = slot_payload(&ZenPackage::parse(&stock, Summary::Ue53).unwrap(), s.widget, &so).unwrap().1;
+            let mut o = stock_slot.offsets;
+            o[edit.field as usize] = want;
+            assert_eq!(slot.offsets, o);
+            expected[base + s.float_at..base + s.float_at + 4].copy_from_slice(&want.to_le_bytes());
+        }
+        assert!(data == expected, "{}: bytes other than the edited floats changed", p.path);
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+    eprintln!("mod container read back in {:?}", started.elapsed());
 }
 
 #[test]

@@ -23,7 +23,7 @@ use lis_ultrawide_core::report::write_failure;
 use lis_ultrawide_core::{display, locate, steam};
 
 fn same(a: &Path, b: &Path) -> bool {
-    steam::normcase(&std::path::absolute(a).unwrap()) == steam::normcase(&std::path::absolute(b).unwrap())
+    steam::path_key(a) == steam::path_key(b)
 }
 
 #[test]
@@ -69,6 +69,41 @@ fn finds_the_game_and_its_prefix_in_a_fake_steam_layout() {
     let found: Vec<_> = locate::candidates(game, None).into_iter().filter(|f| same(&f.exe, &exe)).collect();
     assert!(!found.is_empty(), "the game in the second library was not found");
     assert!(found[0].source.starts_with("Steam library"), "the game was found, but not through Steam: {:?}", found[0]);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::symlink;
+        std::fs::create_dir_all(home.join(".steam")).unwrap();
+        symlink(&steam_dir, home.join(".steam/steam")).unwrap();
+        symlink(&steam_dir, home.join(".steam/root")).unwrap();
+        let home_alias = tmp.join("home-alias");
+        symlink(&home, &home_alias).unwrap();
+        let library_alias = tmp.join("library-alias");
+        symlink(&library, &library_alias).unwrap();
+        // Register aliases as well as the real library, as Steam does on Bazzite.
+        std::fs::write(
+            steam_dir.join("steamapps/libraryfolders.vdf"),
+            format!("\"path\" \"{}\"\n\"path\" \"{}\"\n\"path\" \"{}\"\n",
+                esc(&home_alias.join(".local/share/Steam")), esc(&library), esc(&library_alias)),
+        ).unwrap();
+        assert_eq!(steam::installs().iter().filter(|p| same(p, &steam_dir)).count(), 1);
+        assert_eq!(steam::libraries().iter().filter(|p| same(p, &library)).count(), 1);
+        // A symlinked game directory and a local discovery alias must merge too.
+        let common = library.join("SteamApps/common");
+        symlink(common.join(game.install_dir()), common.join(format!("{}-alias", game.install_dir()))).unwrap();
+        let alias_exe = library_alias.join(exe.strip_prefix(&library).unwrap());
+        let copies = locate::candidates(game, alias_exe.parent());
+        assert_eq!(copies.iter().filter(|f| same(&f.exe, &exe)).count(), 1);
+        assert_eq!(copies[0].exe, alias_exe, "keep the first path and its Steam ancestry");
+        // Identical bytes in an independent directory are still a separate copy.
+        let independent = common.join(format!("{}-copy", game.install_dir())).join(game.exe_relative());
+        std::fs::create_dir_all(independent.parent().unwrap()).unwrap();
+        std::fs::copy(&exe, &independent).unwrap();
+        let copies = locate::candidates(game, None);
+        assert_eq!(copies.iter().filter(|f| same(&f.exe, &exe)).count(), 1);
+        assert_eq!(copies.iter().filter(|f| same(&f.exe, &independent)).count(), 1);
+        assert_ne!(steam::path_key(&exe), steam::path_key(&independent));
+    }
 
     // the prefix does not exist until the game has been started once
     assert_eq!(engine_ini_path(game, Some(&exe), None), None, "an Engine.ini path was returned with no prefix");

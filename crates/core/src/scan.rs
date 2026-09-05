@@ -102,10 +102,16 @@ impl Sig {
 
 /// The first run of at least `need` int3 (0xCC) padding bytes that begins
 /// right after a byte that is not padding, so the cave starts on an
-/// instruction boundary. Bytes inside `taken` count as used, which is how a
-/// second cave stays clear of the first before either is written.
-pub fn find_cave(img: &Image, need: usize, taken: &[(u64, usize)]) -> Option<u64> {
+/// instruction boundary, in the section that holds `near` (the site the
+/// cave serves) and in no other: Reunion's executable carries a second
+/// executable section that is Denuvo's, not the engine's. Bytes inside
+/// `taken` count as used, which is how a second cave stays clear of the
+/// first before either is written.
+pub fn find_cave(img: &Image, near: u64, need: usize, taken: &[(u64, usize)]) -> Option<u64> {
     for s in &img.sections {
+        if near < s.va || near >= s.va + s.data.len() as u64 {
+            continue;
+        }
         let data = s.data;
         let free = |i: usize| {
             data[i] == 0xCC && {
@@ -152,13 +158,18 @@ mod tests {
         let mut data = vec![0x90u8; 64];
         data[10..30].fill(0xCC); // 20 bytes, preceded by code
         data[40..64].fill(0xCC); // 24 bytes to the end
-        let img = Image { sections: vec![Section { va: 0x1000, data: &data }] };
-        assert_eq!(find_cave(&img, 16, &[]), Some(0x100A));
-        assert_eq!(find_cave(&img, 21, &[]), Some(0x1028));
-        assert_eq!(find_cave(&img, 25, &[]), None);
+        let other = vec![0xCCu8; 64];
+        let img = Image {
+            sections: vec![Section { va: 0x1000, data: &data }, Section { va: 0x2000, data: &other }],
+        };
+        assert_eq!(find_cave(&img, 0x1005, 16, &[]), Some(0x100A));
+        assert_eq!(find_cave(&img, 0x1005, 21, &[]), Some(0x1028));
+        // the second section has room, but it is not the site's section
+        assert_eq!(find_cave(&img, 0x1005, 25, &[]), None);
+        assert_eq!(find_cave(&img, 0x2005, 25, &[]), Some(0x2000)); // its own section
         // the first cave used 12 of the 20 bytes: the remaining 8 start on
         // the boundary after it
-        assert_eq!(find_cave(&img, 8, &[(0x100A, 12)]), Some(0x1016));
-        assert_eq!(find_cave(&img, 9, &[(0x100A, 12)]), Some(0x1028));
+        assert_eq!(find_cave(&img, 0x1005, 8, &[(0x100A, 12)]), Some(0x1016));
+        assert_eq!(find_cave(&img, 0x1005, 9, &[(0x100A, 12)]), Some(0x1028));
     }
 }

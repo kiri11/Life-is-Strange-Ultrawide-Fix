@@ -4,7 +4,7 @@
 // Additional term under GPL-3 section 7(b): every copy or modified version,
 // in source or binary form, must preserve this notice and credit the
 // original author, Kiri11, with a link to the original project at
-// https://github.com/kiri11/Life-is-Strange-Double-Exposure-Ultrawide.
+// https://github.com/kiri11/Life-is-Strange-Ultrawide-Fix.
 
 //! `lis-ultrawide-fix`: the installer, for Windows and Linux.
 //!
@@ -24,7 +24,12 @@
 //!
 //! The Windows front-end (LiSUltrawidePatcher.cs) runs this binary and
 //! reads its output. Its contract, which a change to either side must keep:
-//! `status` prints `status:`, `detail:`, `files:` and `filesdetail:` lines;
+//! `status` prints `title:`, `status:`, `detail:`, `files:` and `filesdetail:`
+//! lines; `find` prints one `known:` line per game the fix knows (title,
+//! short title, executable name, tab-separated), `Game executable:` for the
+//! game it picked, one `found:` line per installed copy of a game (title,
+//! short title, path, where it was found), the pick first, and `Note:`
+//! lines worth showing;
 //! the exit code is 0 for success, 1 for a usage problem or a game that was
 //! not found, 2 for an error the user can act on, 130 when cancelled; the
 //! output is UTF-8; the phrase "as administrator" in the output means a
@@ -87,7 +92,7 @@ Usage: lis-ultrawide-fix [install|restore|status|find] [options]
 
 Options:
   --exe PATH          the game executable (found automatically when omitted)
-  --game ID           which game: double-exposure (detected when omitted)
+  --game ID           which game: double-exposure or reunion (detected when omitted)
   --width W           display width, e.g. 5120 (detected when omitted)
   --height H          display height, e.g. 2160
   --yes, -y           accept the defaults, never ask, never open a dialog

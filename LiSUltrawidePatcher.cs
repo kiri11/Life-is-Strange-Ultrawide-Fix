@@ -1,4 +1,4 @@
-// Life is Strange: Double Exposure - Ultrawide Fix (Windows front-end)
+// Life is Strange - Ultrawide Fix (Windows front-end)
 //
 // Copyright (C) 2026 Kiri11.  Free software under the GNU General Public
 // License, version 3 or later - see LICENSE for the full terms.
@@ -6,23 +6,29 @@
 // Additional term under GPL-3 section 7(b): every copy or modified version,
 // in source or binary form, must preserve this notice and credit the
 // original author, Kiri11, with a link to the original project at
-// https://github.com/kiri11/Life-is-Strange-Double-Exposure-Ultrawide.
+// https://github.com/kiri11/Life-is-Strange-Ultrawide-Fix.
 //
 // This is deliberately a THIN front-end. It contains no patch logic of its own:
-// every button runs lis-ultrawide-fix.exe from its own folder, which is the
-// single source of truth for what gets installed next to the executable,
-// written next to the game data and to Engine.ini. Even the game search is
-// the installer's ("find"), so the window can never disagree with what
-// Install would do. An earlier version of this file reimplemented the byte
-// patches in C# and silently drifted out of sync, which is exactly the bug
-// this structure prevents.
+// every button runs lis-ultrawide-fix.exe from the cli folder next to this
+// program, which is the single source of truth for what gets installed next
+// to the executable, written next to the game data and to Engine.ini. Even
+// the game search is the installer's ("find"), and so is the list of games
+// the fix knows: the window carries no game name, no executable name and no
+// path of its own, so it can never disagree with what Install would do, and
+// a game added to the installer appears here without a change. An earlier
+// version of this file reimplemented the byte patches in C# and silently
+// drifted out of sync, which is exactly the bug this structure prevents.
 //
 // The contract with the installer, which a change to either side must keep
 // (crates/installer/src/main.rs states the same):
 //   - arguments: install|restore|status|find, --exe PATH, --width W,
 //     --height H, --yes, --no-camera, --no-ui, --no-chromatic-fix, --sharpen
-//   - "find" prints a "Game executable: <path>" line
-//   - "status" prints "status:", "detail:", "files:" and "filesdetail:" lines
+//   - "find" prints one "known: <title>\t<short title>\t<exe name>" line per
+//     game the fix knows, "Game executable: <path>" for the game it picked,
+//     and one "found: <title>\t<short title>\t<path>" line per installed
+//     game, the pick first
+//   - "status" prints "title:", "status:", "detail:", "files:" and
+//     "filesdetail:" lines
 //   - exit code 0 is success; 2 is a problem the user can act on
 //   - the output is UTF-8, whatever the console code page
 //   - the phrase "as administrator" in the output means a permission problem
@@ -59,10 +65,10 @@ using System.Windows.Forms;
 // drops the zero padding; AssemblyInformationalVersion carries the exact tag
 // text. The CI build rewrites all three from the version it is publishing,
 // together with the installer's, so one number identifies the whole fix.
-[assembly: AssemblyTitle("Life is Strange: Double Exposure - Ultrawide Fix")]
+[assembly: AssemblyTitle("Life is Strange - Ultrawide Fix")]
 [assembly: AssemblyDescription("Installs the ultrawide and cutscene fix for "
-                               + "Life is Strange: Double Exposure.")]
-[assembly: AssemblyProduct("LiS:DE Ultrawide Fix")]
+                               + "Life is Strange: Double Exposure and Reunion.")]
+[assembly: AssemblyProduct("LiS Ultrawide Fix")]
 [assembly: AssemblyCopyright("Copyright (C) 2026 Kiri11. "
                              + "GPL-3.0-or-later; see LICENSE.")]
 [assembly: AssemblyVersion("2026.8.31.1")]
@@ -95,13 +101,34 @@ namespace LiSUltrawidePatcher
             new Preset("7680x2160 (32:9 Super Ultrawide)", 7680, 2160),
             new Preset("3840x1200 (32:10)", 3840, 1200),
             new Preset("2560x1600 (16:10)", 2560, 1600),
+            new Preset("1280x800 (16:10 Steam Deck)", 1280, 800),
         };
 
+        /// <summary>A game the installer knows, installed or not (a "known:" line).</summary>
+        private struct GameInfo
+        {
+            public string Title, Short, Exe;
+        }
+
+        /// <summary>One executable the list offers: a "found:" line, or a browsed file.</summary>
+        private class ExeItem
+        {
+            public string Title;      // the installer's full title, or null for a file no game claims
+            public string Short;      // what the list and the heading call it
+            public string Path;
+            public string Source;     // where the installer found it, null for a browsed file
+            public override string ToString() { return Short + "  -  " + Path; }
+        }
+
+        private readonly List<GameInfo> known = new List<GameInfo>();
+        private readonly List<ExeItem> found = new List<ExeItem>();   // the installer's pick first
+
         private TextBox txtExePath, txtWidth, txtHeight, txtLog;
-        private ComboBox cmbPresets;
+        private ComboBox cmbExe, cmbPresets;
         private CheckBox chkExe, chkGameFiles, chkChromatic, chkSharpen;
         private Button btnBrowse, btnInstall, btnRestore;
-        private Label lblCustom, lblX, lblExeStatus, lblFilesStatus;
+        private Label lblExeHeader, lblCustom, lblX, lblExeStatus, lblFilesStatus;
+        private TableLayoutPanel exeRow;
         private ToolTip tips;
         private System.Windows.Forms.Timer checkTimer;
 
@@ -118,6 +145,7 @@ namespace LiSUltrawidePatcher
         // as soon as the system font metrics differed from the ones assumed.
 
         private const int ContentWidth = 560;
+        private const string TitleSuffix = " - Ultrawide Fix";
 
         private Label Header(string text)
         {
@@ -158,12 +186,12 @@ namespace LiSUltrawidePatcher
 
         private void InitializeComponent()
         {
-            Text = "Life is Strange: Double Exposure - Ultrawide Fix";
+            Text = "Life is Strange" + TitleSuffix;     // the game's own title once one is selected
             AutoScaleMode = AutoScaleMode.Font;
             StartPosition = FormStartPosition.CenterScreen;
             Font = new Font("Segoe UI", 9F);
-            ClientSize = new Size(600, 640);
-            MinimumSize = new Size(560, 560);
+            ClientSize = new Size(600, 760);        // the log gets what the controls leave
+            MinimumSize = new Size(560, 640);
             try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); }
             catch { }
 
@@ -175,9 +203,15 @@ namespace LiSUltrawidePatcher
             Controls.Add(root);
 
             // --- game executable
-            root.Controls.Add(Header("Game executable"));
+            //
+            // One game installed: a path box, as before. Several: a list of
+            // them in the same place, since the choice is then between games
+            // rather than about a path (see UsePicker). Browse works in both.
+            lblExeHeader = Header("Game executable");
+            lblExeHeader.MaximumSize = new Size(ContentWidth, 0);   // the long form wraps
+            root.Controls.Add(lblExeHeader);
 
-            TableLayoutPanel exeRow = new TableLayoutPanel();
+            exeRow = new TableLayoutPanel();
             exeRow.ColumnCount = 2;
             exeRow.Dock = DockStyle.Fill;      // the path box gets the whole row
             exeRow.AutoSize = true;
@@ -187,6 +221,10 @@ namespace LiSUltrawidePatcher
             exeRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
             txtExePath = new TextBox();
             txtExePath.Dock = DockStyle.Fill;
+            cmbExe = new ComboBox();                     // takes the box's cell in UsePicker
+            cmbExe.DropDownStyle = ComboBoxStyle.DropDownList;
+            cmbExe.Dock = DockStyle.Fill;
+            cmbExe.SelectedIndexChanged += OnExePicked;
             btnBrowse = new Button();
             btnBrowse.Text = "Browse...";
             btnBrowse.AutoSize = true;
@@ -362,13 +400,140 @@ namespace LiSUltrawidePatcher
             }
         }
 
+        // ---- the executable: a path box, or a list of installed games -------
+
+        private bool picker;          // is the list in place of the path box?
+
+        /// <summary>The selected executable's path, trimmed; empty when none.</summary>
+        private string ExePath
+        {
+            get
+            {
+                if (!picker) return txtExePath.Text.Trim();
+                ExeItem item = cmbExe.SelectedItem as ExeItem;
+                return item == null ? "" : item.Path;
+            }
+        }
+
+        /// <summary>Swap the path box for the list of games. Once; never back.</summary>
+        private void UsePicker()
+        {
+            if (picker) return;
+            picker = true;
+            exeRow.Controls.Remove(txtExePath);
+            exeRow.Controls.Add(cmbExe, 0, 0);
+        }
+
+        /// <summary>The list entry for a path: what the installer calls the game, else the file name.</summary>
+        private ExeItem Describe(string path)
+        {
+            ExeItem item = new ExeItem();
+            item.Path = path;
+            item.Short = Path.GetFileName(path);
+            foreach (GameInfo g in known)
+                if (string.Equals(g.Exe, item.Short, StringComparison.OrdinalIgnoreCase))
+                {
+                    item.Title = g.Title;
+                    item.Short = g.Short;
+                }
+            return item;
+        }
+
+        /// <summary>Make a path the selection, in whichever control is showing.</summary>
+        private void SelectExe(string path)
+        {
+            if (!picker)
+            {
+                txtExePath.Text = path;
+                return;
+            }
+            for (int i = 0; i < cmbExe.Items.Count; i++)
+                if (string.Equals(((ExeItem)cmbExe.Items[i]).Path, path,
+                                  StringComparison.OrdinalIgnoreCase))
+                {
+                    cmbExe.SelectedIndex = i;
+                    return;
+                }
+            cmbExe.Items.Add(Describe(path));
+            FitDropDown();
+            cmbExe.SelectedIndex = cmbExe.Items.Count - 1;
+        }
+
+        /// <summary>The open list wide enough for its longest entry; the closed one cuts the path's end.</summary>
+        private void FitDropDown()
+        {
+            int widest = cmbExe.Width;
+            foreach (object item in cmbExe.Items)
+                widest = Math.Max(widest, TextRenderer.MeasureText(item.ToString(), cmbExe.Font).Width + 24);
+            cmbExe.DropDownWidth = Math.Min(widest, Screen.FromControl(this).WorkingArea.Width - 40);
+        }
+
+        private void OnExePicked(object sender, EventArgs e)
+        {
+            ExeItem item = cmbExe.SelectedItem as ExeItem;
+            tips.SetToolTip(cmbExe, item == null ? "" : item.Path);
+            UpdateExeHeader();
+            SetGameTitle(item == null ? null : item.Title);
+            checkTimer.Stop();
+            StartExeCheck();             // a click, not typing: check at once
+        }
+
+        /// <summary>"Game executable", and with the list, which games it holds; the entry itself says which is selected.</summary>
+        private void UpdateExeHeader()
+        {
+            if (!picker)
+            {
+                lblExeHeader.Text = "Game executable";
+                return;
+            }
+            lblExeHeader.Text = "Game executable:  " + JoinAnd(CountedNames()) + " found";
+        }
+
+        /// <summary>The games found, in order, a game installed twice as "Double Exposure (2 copies)".</summary>
+        private List<string> CountedNames()
+        {
+            List<string> names = new List<string>();
+            List<int> counts = new List<int>();
+            foreach (ExeItem f in found)
+            {
+                int i = names.IndexOf(f.Short);
+                if (i < 0) { names.Add(f.Short); counts.Add(1); }
+                else counts[i]++;
+            }
+            for (int i = 0; i < names.Count; i++)
+                if (counts[i] > 1) names[i] += " (" + counts[i] + " copies)";
+            return names;
+        }
+
+        /// <summary>The window title names the selected game; the first game the installer knows when none is.</summary>
+        private void SetGameTitle(string title)
+        {
+            if (title == null) title = known.Count > 0 ? known[0].Title : "Life is Strange";
+            Text = title + TitleSuffix;
+        }
+
+        /// <summary>"A", "A and B", "A, B and C".</summary>
+        private static string JoinAnd(List<string> items)
+        {
+            if (items.Count == 0) return "";
+            if (items.Count == 1) return items[0];
+            string[] head = items.GetRange(0, items.Count - 1).ToArray();
+            return string.Join(", ", head) + " and " + items[items.Count - 1];
+        }
+
         private void OnBrowse(object sender, EventArgs e)
         {
             OpenFileDialog d = new OpenFileDialog();
-            d.Filter = "Chronos-Win64-Shipping.exe|Chronos-Win64-Shipping.exe|All files|*.*";
+            // the filter lists every executable the installer knows
+            List<string> exes = new List<string>();
+            foreach (GameInfo g in known) exes.Add(g.Exe);
+            d.Filter = exes.Count == 0
+                ? "All files|*.*"
+                : "Game executable (" + string.Join(", ", exes.ToArray()) + ")|"
+                  + string.Join(";", exes.ToArray()) + "|All files|*.*";
             d.RestoreDirectory = true;
             // start where the current selection is, with that file selected
-            string current = txtExePath.Text.Trim();
+            string current = ExePath;
             if (current.Length > 0)
             {
                 try
@@ -379,18 +544,25 @@ namespace LiSUltrawidePatcher
                 }
                 catch { }
             }
-            if (d.ShowDialog() == DialogResult.OK) txtExePath.Text = d.FileName;
+            if (d.ShowDialog() == DialogResult.OK) SelectExe(d.FileName);
         }
 
         // ---- the installer ------------------------------------------------
 
         private const string CliName = "lis-ultrawide-fix.exe";
+        private const string CliWhere = "in the cli folder next to this program";
 
-        /// <summary>The installer next to this program, or null.</summary>
+        /// <summary>The installer: in the cli folder next to this program (the
+        /// archive's layout), else next to it (a build tree); null when neither.</summary>
         private static string CliPath()
         {
-            string p = Path.Combine(AppDomain.CurrentDomain.BaseDirectory, CliName);
-            return File.Exists(p) ? p : null;
+            string here = AppDomain.CurrentDomain.BaseDirectory;
+            foreach (string dir in new string[] { Path.Combine(here, "cli"), here })
+            {
+                string p = Path.Combine(dir, CliName);
+                if (File.Exists(p)) return p;
+            }
+            return null;
         }
 
         /// <summary>Start settings shared by every run of the installer.</summary>
@@ -444,34 +616,72 @@ namespace LiSUltrawidePatcher
             catch { return null; }
         }
 
+        /// <summary>The tab-separated fields of a "known:" or "found:" line, or null when there are not n of them.</summary>
+        private static string[] Fields(string line, string prefix, int n)
+        {
+            string[] f = line.Substring(prefix.Length).Split('\t');
+            return f.Length == n ? f : null;
+        }
+
         private void AutoDetect()
         {
             // executable: the installer's own search, so the window agrees
-            // with what Install would do
+            // with what Install would do; the games it knows come along
             if (CliPath() == null)
             {
-                Log(CliName + " must sit next to this program. Unpack the whole archive.");
+                Log(CliName + " must be " + CliWhere + ". Unpack the whole archive.");
             }
             else
             {
-                string found = null, via = null;
+                List<string> notes = new List<string>();
                 string text = RunCli("find") ?? "";
                 foreach (string line in text.Split('\n'))
                 {
                     string t = line.Trim();
-                    if (t.StartsWith("Game executable: ")) found = t.Substring(17).Trim();
-                    else if (t.StartsWith("Found game via ")) via = t;
+                    string[] f;
+                    if (t.StartsWith("known: ") && (f = Fields(t, "known: ", 3)) != null)
+                    {
+                        GameInfo g = new GameInfo();
+                        g.Title = f[0];
+                        g.Short = f[1];
+                        g.Exe = f[2];
+                        known.Add(g);
+                    }
+                    else if (t.StartsWith("found: ") && (f = Fields(t, "found: ", 4)) != null)
+                    {
+                        ExeItem item = new ExeItem();
+                        item.Title = f[0];
+                        item.Short = f[1];
+                        item.Path = f[2];
+                        item.Source = f[3];
+                        found.Add(item);
+                    }
+                    else if (t.StartsWith("Note: ")) notes.Add(t);
                 }
-                if (found != null)
+                if (found.Count > 1)
                 {
-                    txtExePath.Text = found;
-                    Log(via ?? "Found the game.");
+                    // several games, or copies of one: the list, the installer's
+                    // pick selected
+                    UsePicker();
+                    foreach (ExeItem item in found) cmbExe.Items.Add(item);
+                    FitDropDown();
+                    foreach (ExeItem item in found) Log("Found " + item.Short + " via " + item.Source + ".");
+                    Log("Pick one to fix. Each is fixed on its own: install once for each.");
+                    foreach (string n in notes) Log(n);
+                    cmbExe.SelectedIndex = 0;
+                }
+                else if (found.Count == 1)
+                {
+                    txtExePath.Text = found[0].Path;
+                    Log("Found " + found[0].Short + " via " + found[0].Source + ".");
                 }
                 else
                 {
                     Log("Could not find the game automatically - use Browse.");
                 }
             }
+            SetGameTitle(picker ? null : Describe(ExePath).Title);
+            UpdateExeHeader();
 
             // resolution: select the preset matching this display, else Custom
             Rectangle b = Screen.PrimaryScreen.Bounds;
@@ -534,19 +744,21 @@ namespace LiSUltrawidePatcher
         private void StartExeCheck()
         {
             if (!IsHandleCreated) return;
-            string path = txtExePath.Text.Trim();
+            string path = ExePath;
             int token = ++checkToken;
 
             if (path.Length == 0)
             {
                 SetExeStatus("", SystemColors.GrayText, "No executable selected.", null);
                 SetFilesStatus("", SystemColors.GrayText, "", null);
+                SetGameTitle(null);
                 return;
             }
             if (!File.Exists(path))
             {
                 SetExeStatus(GlyphWarn, WarnColor, "There is no file at that path.", path);
                 SetFilesStatus("", SystemColors.GrayText, "", null);
+                SetGameTitle(null);
                 return;
             }
             SetExeStatus("", SystemColors.GrayText,
@@ -555,15 +767,15 @@ namespace LiSUltrawidePatcher
 
             ThreadPool.QueueUserWorkItem(delegate
             {
-                string status, detail, files, filesDetail;
-                RunCheck(path, out status, out detail, out files, out filesDetail);
+                string title, status, detail, files, filesDetail;
+                RunCheck(path, out title, out status, out detail, out files, out filesDetail);
                 if (token != checkToken) return;             // superseded
                 try
                 {
                     BeginInvoke((MethodInvoker)delegate
                     {
                         if (token != checkToken) return;
-                        ApplyStatus(status, detail);
+                        ApplyStatus(status, detail, title);
                         ApplyFilesStatus(files, filesDetail);
                     });
                 }
@@ -599,8 +811,21 @@ namespace LiSUltrawidePatcher
             }
         }
 
-        private void ApplyStatus(string status, string detail)
+        /// <summary>The installer's one-line detail as a sentence of its own.</summary>
+        private static string Sentence(string detail)
         {
+            if (string.IsNullOrEmpty(detail)) return null;
+            string s = char.ToUpper(detail[0]) + detail.Substring(1);
+            return s.EndsWith(".") ? s : s + ".";
+        }
+
+        private void ApplyStatus(string status, string detail, string title)
+        {
+            // the title is the installer's word on which game this is; it
+            // means nothing for a file no game claims
+            bool isGame = status == "installed" || status == "outdated"
+                          || status == "foreign" || status == "none";
+            SetGameTitle(isGame ? title : null);
             switch (status)
             {
                 case "installed":
@@ -626,16 +851,16 @@ namespace LiSUltrawidePatcher
                                  "Ultrawide camera loader is not installed.", detail);
                     break;
                 case "notgame":
+                    // the installer names every executable it knows
                     SetExeStatus(GlyphWarn, WarnColor,
-                                 "That is not Chronos-Win64-Shipping.exe - select the game's "
-                                 + "own executable.", detail);
+                                 Sentence(detail) ?? "That is not the game's executable.", detail);
                     break;
                 case "missing":
                     SetExeStatus(GlyphWarn, WarnColor, "There is no file at that path.", detail);
                     break;
                 case "nocli":
                     SetExeStatus("", SystemColors.GrayText,
-                                 "Not checked - " + CliName + " is not next to this program.", null);
+                                 "Not checked - " + CliName + " is not " + CliWhere + ".", null);
                     break;
                 default:
                     SetExeStatus("", SystemColors.GrayText, "Could not check this file.", detail);
@@ -644,9 +869,10 @@ namespace LiSUltrawidePatcher
         }
 
         /// <summary>"lis-ultrawide-fix status", out of sight; never prompts.</summary>
-        private void RunCheck(string path, out string status, out string detail,
+        private void RunCheck(string path, out string title, out string status, out string detail,
                               out string files, out string filesDetail)
         {
+            title = null;
             status = "error";
             detail = null;
             files = "error";
@@ -657,7 +883,8 @@ namespace LiSUltrawidePatcher
             foreach (string line in text.Split('\n'))
             {
                 string t = line.Trim();
-                if (t.StartsWith("status: ")) status = t.Substring(8).Trim();
+                if (t.StartsWith("title: ")) title = t.Substring(7).Trim();
+                else if (t.StartsWith("status: ")) status = t.Substring(8).Trim();
                 else if (t.StartsWith("detail: ")) detail = t.Substring(8).Trim();
                 else if (t.StartsWith("files: ")) files = t.Substring(7).Trim();
                 else if (t.StartsWith("filesdetail: ")) filesDetail = t.Substring(13).Trim();
@@ -677,7 +904,7 @@ namespace LiSUltrawidePatcher
             string cli = CliPath();
             if (cli == null)
             {
-                MessageBox.Show(CliName + " must sit next to this program. Unpack the "
+                MessageBox.Show(CliName + " must be " + CliWhere + ". Unpack the "
                                 + "whole archive, not just this file.",
                                 "Missing " + CliName, MessageBoxButtons.OK,
                                 MessageBoxIcon.Error);
@@ -821,7 +1048,8 @@ namespace LiSUltrawidePatcher
         /// <summary>The arguments both buttons share, or null when the form is not ready.</summary>
         private string CommonArgs()
         {
-            if (txtExePath.Text.Trim().Length == 0)
+            string exe = ExePath;
+            if (exe.Length == 0)
             {
                 MessageBox.Show("Select the game executable first.", "No executable",
                                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
@@ -835,7 +1063,7 @@ namespace LiSUltrawidePatcher
                                 MessageBoxButtons.OK, MessageBoxIcon.Warning);
                 return null;
             }
-            return "--exe " + Quote(txtExePath.Text.Trim()) + " --width " + w
+            return "--exe " + Quote(exe) + " --width " + w
                    + " --height " + h + " --yes";
         }
 

@@ -32,7 +32,7 @@ pub fn candidates(game: &dyn Game, self_dir: Option<&Path>) -> Vec<Found> {
     let finders: [Finder; 4] = [local_candidates, steam_candidates, epic_candidates, generic_candidates];
     for finder in finders {
         for f in finder(game, self_dir) {
-            if seen.insert(steam::normcase(&f.exe)) {
+            if seen.insert(steam::path_key(&f.exe)) {
                 out.push(f);
             }
         }

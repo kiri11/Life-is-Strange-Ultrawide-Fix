@@ -150,3 +150,101 @@ fn matches_the_reference_patch_on_the_real_executable() {
     }
     assert!(plan.notes.iter().all(|n| !n.contains("moved")), "{:?}", plan.notes);
 }
+
+// ---- Reunion (RESEARCH.md section 13) --------------------------------------
+
+use lis_ultrawide_core::games::reunion::plan_reunion;
+
+/// One section holding Reunion's two stock sites and one int3 run.
+fn synthetic_reunion() -> Vec<u8> {
+    let mut d = vec![0x90u8; 0x4000];
+    let put = |d: &mut Vec<u8>, at: usize, bytes: Vec<u8>| d[at..at + bytes.len()].copy_from_slice(&bytes);
+    put(&mut d, AXIS, hex("3BC17E06 4080FE02 742C 4080FE01 7426"));
+    put(&mut d, GATE, hex("0FB68B59020000 334F68 83E101 334F68 894F68"));
+    d[CAVES - 1] = 0xC3;
+    d[CAVES..CAVES + 0x100].fill(0xCC);
+    d
+}
+
+#[test]
+fn plans_the_reunion_patch_over_a_synthetic_image() {
+    let d = synthetic_reunion();
+    let plan = plan_reunion(&image(&d), hex4("A3011840")).unwrap();
+    let got = writes(&plan);
+
+    let axis = BASE + AXIS as u64;
+    let gate = BASE + GATE as u64;
+    let cave_a = BASE + CAVES as u64;
+
+    let mut want = BTreeMap::new();
+    want.insert(axis + 7, vec![0xFF]);
+    want.insert(axis + 13, vec![0xFF]);
+    want.insert(cave_a, hex("0FB68B59020000 8B8354020000 3D0000E03F 7611 3D A3011840 730A 83E1FE C7475C 398EE33F C3"));
+    let mut site_a = vec![0xE8];
+    site_a.extend_from_slice(&((cave_a as i64 - (gate as i64 + 5)) as i32).to_le_bytes());
+    site_a.extend([0x66, 0x90]);
+    want.insert(gate, site_a);
+    assert_eq!(got, want);
+    // no cave B for this game: its cutscenes are cine cameras (RESEARCH 13e)
+    assert_eq!(plan.writes.len(), 4);
+
+    let img = image(&d);
+    for w in &plan.writes {
+        assert_eq!(img.read(w.va, w.expected.len()).unwrap(), &w.expected[..], "{}", w.what);
+    }
+}
+
+#[test]
+fn reunion_caves_stay_in_the_sites_section() {
+    // a second executable section full of padding (Denuvo's, in the real
+    // game) must never receive a cave
+    let d = synthetic_reunion();
+    let mut d2 = d.clone();
+    d2[CAVES..CAVES + 0x100].fill(0x90); // no room in the code section
+    let other = vec![0xCCu8; 0x1000];
+    let img = Image { sections: vec![Section { va: BASE, data: &d2 }, Section { va: 0x10000, data: &other }] };
+    let err = plan_reunion(&img, hex4("A3011840")).unwrap_err();
+    assert!(err.contains("cave A in the code section"), "{err}");
+    let img = Image { sections: vec![Section { va: BASE, data: &d }, Section { va: 0x10000, data: &other }] };
+    let plan = plan_reunion(&img, hex4("A3011840")).unwrap();
+    assert!(plan.writes.iter().all(|w| w.va < 0x10000), "{:?}", plan.notes);
+}
+
+/// The shipped Reunion executable, when this machine has it (RESEARCH 13d,
+/// 13e): the sites where the analysis put them, found without scanning, the
+/// caves in `.sdata`, and the bytes the section documents.
+#[test]
+fn matches_the_documented_reunion_sites_on_the_real_executable() {
+    let path = std::env::var("LIS_REUNION_STOCK_EXE").unwrap_or_else(|_| {
+        r"D:\SteamLibrary\steamapps\common\LifeisStrangeReunion\Iris\Binaries\Win64\Iris-Win64-Shipping.exe".into()
+    });
+    let Ok(data) = std::fs::read(&path) else {
+        eprintln!("skipped: no Reunion executable at {path} (set LIS_REUNION_STOCK_EXE)");
+        return;
+    };
+    let (headers, img) = pe::file_image(&data).unwrap();
+    let sdata = headers.sections.iter().find(|s| s.name == ".sdata").expect(".sdata");
+    let in_sdata = |va: u64| va >= sdata.va && va < sdata.va + sdata.vsize as u64;
+    let started = std::time::Instant::now();
+    let plan = plan_reunion(&img, lis_ultrawide_core::camera::gate_upper(5120, 2160)).unwrap();
+    eprintln!("planned in {:?}: {:?}", started.elapsed(), plan.notes);
+
+    const AXIS_R: u64 = 0x3698BD4;
+    const GATE_R: u64 = 0x36A687D;
+    const CAVE_A: u64 = 0xC1C005;
+    let rel = |to: u64, next: u64| ((to as i64 - next as i64) as i32).to_le_bytes().to_vec();
+    let mut want = BTreeMap::new();
+    want.insert(AXIS_R + 7, vec![0xFF]);
+    want.insert(AXIS_R + 13, vec![0xFF]);
+    want.insert(CAVE_A, hex("0FB68B59020000 8B8354020000 3D0000E03F 7611 3D A3011840 730A 83E1FE C7475C 398EE33F C3"));
+    let mut site_a = vec![0xE8];
+    site_a.extend(rel(CAVE_A, GATE_R + 5));
+    site_a.extend([0x66, 0x90]);
+    want.insert(GATE_R, site_a);
+    assert_eq!(writes(&plan), want);
+    for w in &plan.writes {
+        assert!(in_sdata(w.va), "{} at {:#x} is outside .sdata", w.what, w.va);
+        assert_eq!(img.read(w.va, w.expected.len()).unwrap(), &w.expected[..], "{}", w.what);
+    }
+    assert!(plan.notes.iter().all(|n| !n.contains("moved")), "{:?}", plan.notes);
+}

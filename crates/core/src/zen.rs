@@ -1,8 +1,13 @@
 //! Zen (cooked IoStore) packages: the name batch, import and export maps,
 //! and where each export's payload is.
 //!
-//! Export payloads are laid out in export-bundle order, not export-map
-//! order: `data_offset = HeaderSize + accumulated sizes in bundle order`.
+//! Where an export's payload is depends on the engine. UE 5.2 lays them
+//! out in export-bundle order, not export-map order:
+//! `data_offset = HeaderSize + accumulated sizes in bundle order`. UE 5.3
+//! replaced the graph data with dependency bundles and added the imported
+//! package names, which pushed the name batch from +44 to +52, and from
+//! then on the payloads sit at `HeaderSize + CookedSerialOffset` in
+//! export-map order (RESEARCH 13i).
 
 use std::collections::HashMap;
 
@@ -119,6 +124,28 @@ pub struct ZenPackage<'a> {
     layout: HashMap<usize, usize>,
 }
 
+/// Which `FZenPackageSummary` a package carries. There is no version field
+/// to read (`bHasVersioningInfo` is 0 in cooked data), so the game says.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Summary {
+    /// UE 5.2: `GraphDataOffset` at +40, the name batch at +44.
+    Ue52,
+    /// UE 5.3 to 5.5: `DependencyBundleHeadersOffset` at +40,
+    /// `DependencyBundleEntriesOffset` at +44, `ImportedPackageNamesOffset`
+    /// at +48, the name batch at +52.
+    Ue53,
+}
+
+impl Summary {
+    /// Where the name batch starts.
+    fn names_at(self) -> usize {
+        match self {
+            Summary::Ue52 => 44,
+            Summary::Ue53 => 52,
+        }
+    }
+}
+
 /// What an `FPackageObjectIndex` refers to.
 #[derive(Debug, PartialEq)]
 pub enum ObjectRef {
@@ -139,14 +166,16 @@ pub fn object_ref(v: u64) -> ObjectRef {
 }
 
 impl<'a> ZenPackage<'a> {
-    pub fn parse(buf: &'a [u8]) -> Result<Self, String> {
+    pub fn parse(buf: &'a [u8], summary: Summary) -> Result<Self, String> {
         let header_size = u32_at(buf, 4)? as usize;
         let name_idx = (u32_at(buf, 8)? & 0x3FFFFFFF) as usize;
         let import_off = u32_at(buf, 28)? as usize;
         let export_off = u32_at(buf, 32)? as usize;
         let bundle_off = u32_at(buf, 36)? as usize;
+        // what follows the export-bundle entries: the graph data (5.2) or
+        // the dependency bundle headers (5.3+); either way their end
         let graph_off = u32_at(buf, 40)? as usize;
-        let (names, _) = load_name_batch(buf, 44)?;
+        let (names, _) = load_name_batch(buf, summary.names_at())?;
         let name = names.get(name_idx).cloned().ok_or("package name index out of range")?;
         if import_off > export_off || export_off > bundle_off || bundle_off > graph_off || graph_off > buf.len() {
             return Err("package header offsets are out of order".into());
@@ -168,15 +197,26 @@ impl<'a> ZenPackage<'a> {
                 template: u64_at(buf, o + 48)?,
             });
         }
-        // export data is stored in export-bundle (Serialize command) order
         let mut layout = HashMap::new();
-        let mut pos = header_size;
-        for i in 0..(graph_off - bundle_off) / 8 {
-            let li = u32_at(buf, bundle_off + 8 * i)? as usize;
-            let cmd = u32_at(buf, bundle_off + 8 * i + 4)?;
-            if cmd == 1 {
-                layout.insert(li, pos);
-                pos += exports.get(li).ok_or("bundle entry names a missing export")?.size as usize;
+        match summary {
+            Summary::Ue52 => {
+                // export data is stored in export-bundle (Serialize command) order
+                let mut pos = header_size;
+                for i in 0..(graph_off - bundle_off) / 8 {
+                    let li = u32_at(buf, bundle_off + 8 * i)? as usize;
+                    let cmd = u32_at(buf, bundle_off + 8 * i + 4)?;
+                    if cmd == 1 {
+                        layout.insert(li, pos);
+                        pos += exports.get(li).ok_or("bundle entry names a missing export")?.size as usize;
+                    }
+                }
+            }
+            Summary::Ue53 => {
+                // export data is stored in export-map order, and each entry's
+                // cooked offset counts from the end of the header
+                for e in &exports {
+                    layout.insert(e.index, header_size + e.cooked_offset as usize);
+                }
             }
         }
         Ok(ZenPackage { buf, header_size, name, names, imports, exports, layout })

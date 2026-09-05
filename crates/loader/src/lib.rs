@@ -4,7 +4,7 @@
 // Additional term under GPL-3 section 7(b): every copy or modified version,
 // in source or binary form, must preserve this notice and credit the
 // original author, Kiri11, with a link to the original project at
-// https://github.com/kiri11/Life-is-Strange-Double-Exposure-Ultrawide.
+// https://github.com/kiri11/Life-is-Strange-Ultrawide-Fix.
 
 //! The ultrawide camera fix, applied in memory when the game starts.
 //!

@@ -72,7 +72,7 @@ fn main() {
             .fold(0u64, |n, p| (n << 16) | p);
         let mut res = winresource::WindowsResource::new();
         res.set("CompanyName", "Kiri11");
-        res.set("ProductName", "Life is Strange: Double Exposure - Ultrawide Fix");
+        res.set("ProductName", "Life is Strange - Ultrawide Fix");
         res.set("FileDescription", "Installer for the Life is Strange ultrawide fix");
         res.set("InternalName", "lis-ultrawide-fix");
         res.set("OriginalFilename", "lis-ultrawide-fix.exe");

@@ -5,11 +5,15 @@
 #
 # Every push to main cuts its own release and no release is ever overwritten,
 # so a build that turns out bad can always be compared against the one before
-# it. Put [skip ci] in the commit subject to push without releasing.
+# it. Put [skip ci] in the commit subject to push without releasing. The
+# commit message is the release notes: the subject is the first line and
+# the body, if any, follows it, so write the notes for a release in the
+# body of the commit (or merge commit) that ships it.
 #
-# One archive per platform. Windows: the front-end, the installer with the
-# loader embedded, and the source. Linux: a static installer and the source.
-# Nothing in either downloads anything.
+# One archive per platform. Windows: the front-end, with the installer (the
+# loader embedded) in a cli folder under it. Linux: the static installer.
+# Neither carries source or tests: the source is this repository at the
+# commit the release names. Nothing in either downloads anything.
 name: Build and release
 
 on:
@@ -127,20 +131,17 @@ jobs:
           /out:LiSUltrawidePatcher.exe LiSUltrawidePatcher.cs
           /r:System.dll /r:System.Windows.Forms.dll /r:System.Drawing.dll
 
-      # What a user needs to run the fix, the file the license needs, and the
-      # source of everything in it: the archive is its own corresponding
-      # source under GPL-3 section 6, so a download from a mod site carries
-      # everything the license promises, with no link to follow. The loader
-      # is inside the installer, so no loose DLL ships. RESEARCH.md and the
-      # icon generator stay in the repository only.
+      # What a user needs to run the fix and the file the license needs. The
+      # command-line installer sits in a cli folder so that nobody launches
+      # it by mistake instead of the window, which looks for it there. The
+      # loader is inside the installer, so no loose DLL ships.
       - name: Stage the Windows archive
         shell: pwsh
         run: |
           $root = 'staging/LiS-Ultrawide-Fix-Windows'
-          New-Item -ItemType Directory -Path $root -Force | Out-Null
-          foreach ($f in 'LiSUltrawidePatcher.exe', 'LiSUltrawidePatcher.cs', 'README.md', 'LICENSE') { Copy-Item $f "$root/$f" }
-          Copy-Item target/release/lis-ultrawide-fix.exe "$root/lis-ultrawide-fix.exe"
-          ./scripts/stage-source.ps1 $root
+          New-Item -ItemType Directory -Path "$root/cli" -Force | Out-Null
+          foreach ($f in 'LiSUltrawidePatcher.exe', 'README.md', 'LICENSE') { Copy-Item $f "$root/$f" }
+          Copy-Item target/release/lis-ultrawide-fix.exe "$root/cli/lis-ultrawide-fix.exe"
           Compress-Archive -Path $root -DestinationPath 'LiS-Ultrawide-Fix-Windows.zip'
           Get-ChildItem -Recurse $root | Select-Object FullName, Length
 
@@ -199,7 +200,6 @@ jobs:
           cp target/x86_64-unknown-linux-musl/release/lis-ultrawide-fix "$root/"
           chmod +x "$root/lis-ultrawide-fix"
           cp README.md LICENSE "$root/"
-          pwsh ./scripts/stage-source.ps1 "$root"
           tar -C staging -czf LiS-Ultrawide-Fix-Linux.tar.gz LiS-Ultrawide-Fix-Linux
           find "$root" -type f | sort | xargs ls -l
       - uses: actions/upload-artifact@v7
@@ -237,13 +237,21 @@ jobs:
         run: |
           tag="v$VERSION"
           run="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-          notes="$(git log -1 --pretty=%s)
+          # The whole commit message, minus the trailer block (Signed-off-by
+          # and the like) that git keeps at the end of the body.
+          subject="$(git log -1 --pretty=%s)"
+          body="$(git log -1 --pretty=%b)"
+          trailers="$(git log -1 --pretty='%(trailers)')"
+          body="$(printf '%s' "${body%"$trailers"}")"
+          notes="$subject
+
+          $body
 
           **Windows:** download LiS-Ultrawide-Fix-Windows.zip, unpack it anywhere and run \`LiSUltrawidePatcher.exe\`.
 
           **Linux and Steam Deck:** download LiS-Ultrawide-Fix-Linux.tar.gz, unpack it and run \`./lis-ultrawide-fix\` from a terminal (or double-click it in Desktop mode).
 
-          Nothing is downloaded and nothing is installed system-wide; each archive holds the whole fix and its source.
+          Nothing is downloaded and nothing is installed system-wide. The source is this repository at the commit below.
 
           Built from \`${{ github.sha }}\` by [this run]($run)."
           # main may have advanced while this run waited; tag the built commit.

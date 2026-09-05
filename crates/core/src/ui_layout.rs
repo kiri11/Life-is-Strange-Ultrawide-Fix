@@ -32,7 +32,7 @@ use crate::iostore::{
 use crate::json::{self, Value};
 use crate::report::{InstallError, Report, Result, replace_file, write_failure};
 use crate::unver::{Slot, decode_slot};
-use crate::zen::{ScriptObjects, ZenPackage};
+use crate::zen::{ScriptObjects, Summary, ZenPackage};
 
 pub const MOD_DIR: &str = "Mods";
 pub const RECORD_VERSION: u64 = 1;
@@ -112,8 +112,10 @@ pub struct UiFix {
     /// The UMG design size the UI was authored for.
     pub design: (f64, f64),
     pub edits: &'static [Edit],
+    /// The formats the game's own containers use, which the mod copies.
     pub toc_version: u8,
     pub container_header_version: u32,
+    pub summary: Summary,
 }
 
 /// UE `EUIScalingRule::ScaleToFit` -> the UMG design space in slate units.
@@ -418,7 +420,7 @@ pub fn build_mod(paks: &Path, ui: &UiFix, design_w: f64, so: &ScriptObjects, r: 
         };
 
         let data = read_chunk(&mut toc, idx, &name)?;
-        let pkg = ZenPackage::parse(&data).map_err(|e| InstallError(format!("cannot parse {name} ({e})")))?;
+        let pkg = ZenPackage::parse(&data, ui.summary).map_err(|e| InstallError(format!("cannot parse {name} ({e})")))?;
         let mut buf = data.clone();
         let mut notes = Vec::new();
         let mut done = 0;
@@ -505,7 +507,7 @@ fn verify_mod(paks: &Path, ui: &UiFix, design_w: f64, so: &ScriptObjects, r: &mu
     for (pkg_path, edits) in by_package(ui) {
         let Some(&idx) = toc.index.get(&pkg_path) else { continue };
         let data = read_chunk(&mut toc, idx, &format!("{}: {pkg_path}", ui.mod_name))?;
-        let pkg = ZenPackage::parse(&data).map_err(|e| InstallError(format!("cannot parse {pkg_path} ({e})")))?;
+        let pkg = ZenPackage::parse(&data, ui.summary).map_err(|e| InstallError(format!("cannot parse {pkg_path} ({e})")))?;
         for edit in edits {
             let want = edit.new.apply(design_w, ui.design);
             let got = slot_payload(&pkg, edit.widget, so).map(|(_, s, _, _)| s.offsets[edit.field as usize] as f64);

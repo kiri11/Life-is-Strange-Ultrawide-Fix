@@ -161,7 +161,10 @@ pub fn check_camera(game: &dyn Game, exe: &Path, shipped: Option<&[u8]>) -> (Cam
         return (CameraStatus::Missing, "there is no file at that path".into());
     }
     if !exe.file_name().is_some_and(|n| n.to_string_lossy().eq_ignore_ascii_case(game.exe_name())) {
-        return (CameraStatus::NotGame, format!("that is not {} - select the game's own executable", game.exe_name()));
+        // the caller may have fallen back to the first game for an executable
+        // no game claims, so name every one the fix knows
+        let names: Vec<&str> = crate::games::GAMES.iter().map(|g| g.exe_name()).collect();
+        return (CameraStatus::NotGame, format!("that is not {} - select the game's own executable", names.join(" or ")));
     }
     let paths = camera_paths(game, exe);
     let dll_name = game.proxy_dlls()[0];
@@ -451,17 +454,20 @@ mod tests {
         // install and remove, with the embedded loader stand-in
         std::fs::remove_file(&backup).unwrap();
         let mut r = Vec::new();
-        install_camera(game, &exe, Some(&ours), Some((5120, 2160)), None, &mut r).unwrap();
+        // Keep Wine lookup inside the fixture even on a machine with the game installed.
+        let engine_ini = tmp.join("Engine.ini");
+        let engine_ini = Some(engine_ini.as_path());
+        install_camera(game, &exe, Some(&ours), Some((5120, 2160)), engine_ini, &mut r).unwrap();
         assert!(file_equals(&paths.dll, &ours));
         assert!(std::fs::read_to_string(&paths.ini).unwrap().contains("Width=5120\nHeight=2160\n"));
-        install_camera(game, &exe, Some(&ours), None, None, &mut r).unwrap();
+        install_camera(game, &exe, Some(&ours), None, engine_ini, &mut r).unwrap();
         assert!(!paths.ini.exists(), "a detected resolution removes the ini");
-        assert!(install_camera(game, &exe, None, None, None, &mut r).is_err(), "no embedded loader: refused");
-        remove_camera(game, &exe, None, &mut r).unwrap();
+        assert!(install_camera(game, &exe, None, None, engine_ini, &mut r).is_err(), "no embedded loader: refused");
+        remove_camera(game, &exe, engine_ini, &mut r).unwrap();
         assert!(!paths.dll.exists());
         std::fs::write(&paths.dll, b"MZ foreign").unwrap();
-        assert!(install_camera(game, &exe, Some(&ours), None, None, &mut r).unwrap_err().0.contains("not this fix's"));
-        remove_camera(game, &exe, None, &mut r).unwrap();
+        assert!(install_camera(game, &exe, Some(&ours), None, engine_ini, &mut r).unwrap_err().0.contains("not this fix's"));
+        remove_camera(game, &exe, engine_ini, &mut r).unwrap();
         assert!(paths.dll.exists(), "a foreign loader is left alone");
         let _ = std::fs::remove_dir_all(&tmp);
     }
