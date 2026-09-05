@@ -8,8 +8,6 @@ A native ultrawide fix for **Life is Strange: Double Exposure** and **Life is St
 - Loading screens and HUD elements use the full width of the screen.
 - Optional: disable chromatic aberration and reduce blurriness.
 
-Both games get all three parts; for Reunion the UI part is the same fix in the game's newer engine formats (see [RESEARCH.md](RESEARCH.md), section 13).
-
 The game's own files are never modified: the camera fix is a small library the game loads at start, and the UI fix is a mod container next to the game data. Nothing runs in the background, nothing is downloaded, nothing is installed system-wide, and there is no performance impact. Everything can be undone with a single **Restore** button.
 
 ---
@@ -117,7 +115,7 @@ The loader writes `LiSUltrawideCamera.log` next to itself at every launch, sayin
 - **The UI is still 16:9 in game (Double Exposure):** check that `Chronos/Content/Paks/Mods/LiSUltrawideUI_P.utoc`, `.ucas` and `.pak` are all present. If they are, open an issue with your resolution.
 - **"Could not locate Engine.ini" on Linux or the Steam Deck:** start the game once, quit, and run the installer again.
 
-### Still broken? Open an issue
+### Still broken?
 
 [Open an issue](https://github.com/kiri11/Life-is-Strange-Ultrawide-Fix/issues) and include:
 
@@ -133,12 +131,6 @@ The loader writes `LiSUltrawideCamera.log` next to itself at every launch, sayin
 The fix changes a handful of bytes in the game's code, in memory at every launch, to force Unreal Engine's built-in Hor+ projection for every camera, and adds a small mod container with full-width versions of the game's UI packages. The complete reverse-engineering breakdown is in **[RESEARCH.md](RESEARCH.md)** (sections 1 to 12 for Double Exposure, 13 for Reunion). Each game is one descriptor under `crates/core/src/games/`: names, paths, the signatures of its patch sites and the bytes of its caves.
 
 Everything is Rust, in one workspace. The only crates it pulls in are pure Rust: `blake3`, `sha1` and `sha2` for the three digests the container formats use, and `winresource` at build time for the Windows version resources. Nothing is needed at run time beyond the operating system:
-
-| Crate | What it is |
-| :--- | :--- |
-| [`crates/core`](crates/core) | The logic: the camera patch planner, the Oodle Kraken decoder, the IoStore and Zen package readers, the container writer, the UI slot edits, the `Engine.ini` block, and where games, Steam libraries and Wine prefixes are |
-| [`crates/loader`](crates/loader) | The library the game loads as `winhttp.dll`: it forwards that DLL's functions to the system copy and patches the game before its own code runs |
-| [`crates/installer`](crates/installer) | `lis-ultrawide-fix`, the command-line installer for Windows and Linux, with the loader embedded |
 
 `LiSUltrawidePatcher.exe` is a thin Windows window that runs `lis-ultrawide-fix.exe`, which it looks for in a `cli` folder next to itself and then in its own folder; it is compiled from [`LiSUltrawidePatcher.cs`](LiSUltrawidePatcher.cs) with the compiler that ships with Windows. [The release workflow](.github/workflows/build.yml) tests the workspace on Linux and Windows, builds the loader and the installers, and names the commit each release was built from. To build it yourself:
 
