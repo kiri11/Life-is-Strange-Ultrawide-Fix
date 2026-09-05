@@ -11,7 +11,7 @@ This describes the fix as it ships, and only that. Approaches that were tried an
 
 ## 1. The Current Solution
 
-Three code changes (one 2-byte branch edit + two code caves) and **no aspect-ratio constants**, applied in memory at every launch by the loader library (`crates/loader`, installed as `winhttp.dll` next to the executable - see 8). All code sites are located by unique byte signatures with the documented file offsets as fast paths (in this build RVA = file offset + 0xA00), so the patch survives game updates that shift offsets; if a signature disappears, nothing is written and the loader's log says so. The executable on disk is never modified.
+Two code changes (one 2-byte branch edit + one code cave) and **no aspect-ratio constants**, applied in memory at every launch by the loader library (`crates/loader`, installed as `winhttp.dll` next to the executable - see 8). All code sites are located by unique byte signatures with the documented file offsets as fast paths (in this build RVA = file offset + 0xA00), so the patch survives game updates that shift offsets; if a signature disappears, nothing is written and the loader's log says so. The executable on disk is never modified.
 
 ```
 Target File: Chronos/Binaries/Win64/Chronos-Win64-Shipping.exe
@@ -20,8 +20,7 @@ Target File: Chronos/Binaries/Win64/Chronos-Win64-Shipping.exe
 0x440ABCF: 01 -> FF                         disable MaintainXFOV branch
                                             (forces the Hor+ MaintainYFOV path)
 0x441A14C: movzx -> call caveA + 2-byte nop aspect-gated unconstrain + divisor pin
-0x4005B87: call displacement -> caveB       cine (loading) views kept boxed
-caveA (40 bytes), caveB (18 bytes):         written into int3 padding; located
+caveA (40 bytes):                           written into int3 padding; located
                                             and linked at patch time
 ------------------------------------------------------------------------------
 ```
@@ -34,7 +33,7 @@ Result matrix (field-verified at 5120x2160):
 | Free-roam exploration | Full-width Hor+, 0% vertical crop |
 | Dialogue / cutscene hand-off | Seamless - no pillarbox sweep, no zoom, no snap |
 | Photo mode / Polaroids | Correct proportions; pipeline bit-identical to vanilla |
-| Main menu | Full-width Hor+ |
+| Main menu, outfit screen | Full-width Hor+ (cine cameras, section 2d) |
 | Loading transitions | Overlay covers the full screen (with the UI patch, section 9) |
 | 16:9 displays | Behavior-neutral |
 
@@ -124,8 +123,10 @@ Every camera authored **narrower than the display** is unconstrained and renders
 
 The gate's upper bound is `display aspect * 1.002` rather than the display aspect exactly, so the ramp's endpoint stays inside the window despite float rounding and any easing overshoot.
 
-### 2d. Cave B: Cine Views Kept Boxed - `0x4005B86`
-In this game `UCineCameraComponent` drives **loading/transition views**, not cutscenes (Deck Nine's cutscene cameras are their own component classes - see 3c). Cine sensors are 16:9, so cave A would unconstrain them; cave B overrides that. The entire binary contains exactly **one direct call** to `UCameraComponent::GetCameraView`: the `Super::GetCameraView` call inside `UCineCameraComponent::GetCameraView`:
+### 2d. Cine Cameras: Nothing Extra - `0x4005B86`
+`UCineCameraComponent` needs no treatment of its own. A scan of every package in both containers (43,869 packages, `pakchunk0` and `pakchunk1`) finds exactly ten `CineCameraComponent`s in the whole game, all plain `CineCameraActor`s placed in levels: the five episode menu lighting levels (`Lighting_EP1_Menu` to `Lighting_EP5_Menu_SnowStorm`), the outfit screen (`Lighting_Customization`), and four lighting-artist cameras in `Lighting_EP2_S3_A_TD`, `EP2_S5B_Lighting_HellertonHouse_TD`, `Lighting_EP3_S3_A_TD` and `Env_Set_LC_Primary_A`. No Blueprint class carries a cine component; cutscenes, dialogue, free roam and the photo cameras are Deck Nine's own classes (3c). A cine sensor is 16:9, so cave A unconstrains the menu and outfit-screen views like any other and they render Hor+ full width. The loading view is not a cine camera either (section 5).
+
+Should a build ever need a cine-only rule, the hook is known: the entire binary contains exactly **one direct call** to `UCameraComponent::GetCameraView`, the `Super::GetCameraView` call inside `UCineCameraComponent::GetCameraView`:
 
 ```
 0x4005B6F: mov  rdi, r8          ; rdi = FMinimalViewInfo& DesiredView (non-volatile)
@@ -133,21 +134,13 @@ In this game `UCineCameraComponent` drives **loading/transition views**, not cut
 0x4005B7D: mov  r8, rdi
 0x4005B80: movaps xmm1, xmm6
 0x4005B83: mov  rcx, rbx
-0x4005B86: call 0x144419EC0      ; Super::GetCameraView  <- rerouted to caveB
+0x4005B86: call 0x144419EC0      ; Super::GetCameraView
 ```
 
-```
-caveB: 48 83 EC 28          sub  rsp, 0x28        ; shadow space for Super
-       E8 <rel32>           call 0x144419EC0      ; original Super call
-       48 83 C4 28          add  rsp, 0x28
-       80 4F 4C 01          or   byte [rdi+0x4C], 1   ; bConstrainAspectRatio = true
-       C3                   ret
-```
-
-Every other invocation of the base `GetCameraView` is a virtual call (non-cine cameras), so this affects exactly the cine class. `rdi` survives the call (callee-saved); stack alignment and Win64 shadow-space rules are respected.
+Every other invocation of the base `GetCameraView` is a virtual call (non-cine cameras), so a cave on this displacement reaches exactly the cine class; `rdi` (the view) survives the call. Reunion's `Super` call is the same shape (13e), where such a cave would box the cutscenes, which is why neither game uses one.
 
 ### 2e. Cave Placement
-Both caves are written into `int3` inter-function padding runs in the code sections (`.text` here; the loader walks every section flagged executable, which Reunion's renamed sections will need) - the first run large enough, found at launch; rel32 displacements computed then too). The loader writes them from the proxy DLL's `DllMain`, after Windows has mapped the image and before the game's entry point runs, making each page writable for the write and restoring its protection afterwards. The caves execute but never store data - `.text` is mapped R-X; a future patch needing writable storage now has the loader's own memory for it (see 5).
+Caves are written into `int3` inter-function padding runs in the code sections (`.text` here; the loader walks every section flagged executable, which Reunion's renamed sections will need) - the first run large enough, found at launch; rel32 displacements computed then too). The loader writes them from the proxy DLL's `DllMain`, after Windows has mapped the image and before the game's entry point runs, making each page writable for the write and restoring its protection afterwards. The caves execute but never store data - `.text` is mapped R-X; a future patch needing writable storage now has the loader's own memory for it (see 5).
 
 ---
 
@@ -163,7 +156,7 @@ The first two rows are **not patched** (see 1 and 4). They are listed because th
 | `0x69C8A8C` | - | Static photo projection float table: `DF 7C DB 3D 55 55 55 3F 39 8E E3 3F` (aspect at +8) |
 | `0x440AAB0` | `0x14440B4B0` | `FMinimalViewInfo::CalculateProjectionMatrixGivenViewRectangle` (fragment; branch at `0x440ABC0`) |
 | `0x44194C0` | `0x144419EC0` | `UCameraComponent::GetCameraView` true entry (flag merge at `0x441A14C`) |
-| `0x4005B60` | `0x144006560` | `UCineCameraComponent::GetCameraView` (Super call at `0x4005B86`) |
+| `0x4005B60` | `0x144006560` | `UCineCameraComponent::GetCameraView` (Super call at `0x4005B86`, not patched) |
 | `0x4004910` | `0x144005310` | `UCineCameraComponent` constructor (filmback defaults 24.89/18.67, 50mm; `bConstrainAspectRatio=true` at `0x40049F6`) |
 | `0x44003D0` | `0x144400DD0` | `ACineCameraActor` constructor |
 
@@ -574,9 +567,9 @@ Everything above is verified against files, and the finished container is read b
 **Game:** *Life is Strange: Reunion* (project `Iris`, Steam app 2624870, install folder `LifeisStrangeReunion`)
 **Engine:** Unreal Engine 5.5.4 (the string `Unreal Engine 5.5.4` is in the executable; the build stamp reads `UE5 Jan 17 2026 01:53:27`, `UE5-CL-0`)
 **Binary:** `Iris/Binaries/Win64/Iris-Win64-Shipping.exe`, 688,115,200 bytes, Denuvo
-**Status (2026-09-04):** the camera fix is implemented (`crates/core/src/games/reunion.rs`) and verified in the game: menu, cutscenes and exploration all render full width at 5120x2160 (13h). It is the branch edit and cave A only; cave B, which Double Exposure needs, boxes Reunion's cutscenes and is left out (13e). The full-width UI is implemented too (13i): the same fixed 3840x2160 `WindowParent` as Double Exposure's, delivered as a mod container in the game's own UE 5.5 formats. Sections 13a to 13f are read from the files on disk; 13g lists what is still open.
+**Status (2026-09-04):** the camera fix is implemented (`crates/core/src/games/reunion.rs`) and verified in the game: menu, cutscenes and exploration all render full width at 5120x2160 (13h). It is the branch edit and cave A only, as in Double Exposure; a cave on the cine `Super` call boxes Reunion's cutscenes and is left out (13e). The full-width UI is implemented too (13i): the same fixed 3840x2160 `WindowParent` as Double Exposure's, delivered as a mod container in the game's own UE 5.5 formats. Sections 13a to 13f are read from the files on disk; 13g lists what is still open.
 
-Two of the three Double Exposure changes transfer: the same two immediates in the projection function and the same seven-byte site in `UCameraComponent::GetCameraView`. The third, cave B on the cine component's single direct `Super` call, exists in the binary but must not be applied here (13e). What changed is the register allocation at each site, the structure offsets (5.5 grew `FMinimalViewInfo` by 20 bytes ahead of `AspectRatio`), and the layout of the executable, which Denuvo wraps.
+Both Double Exposure changes transfer: the same two immediates in the projection function and the same seven-byte site in `UCameraComponent::GetCameraView`. The cine component's single direct `Super` call (2d) exists in the binary too, and must not be patched here (13e). What changed is the register allocation at each site, the structure offsets (5.5 grew `FMinimalViewInfo` by 20 bytes ahead of `AspectRatio`), and the layout of the executable, which Denuvo wraps.
 
 ### 13a. The Executable
 
@@ -728,7 +721,7 @@ Site: `0F B6 8B 59 02 00 00` becomes `E8 <rel32> 66 90`. Four writes in all; the
 
 `3B 8E E3 3F` (1.7777779f, the component constructor default) occurs 9 times in `.sdata`, `39 8E E3 3F` (1.7777778f) twice; Double Exposure's photo projection table (`DF 7C DB 3D 55 55 55 3F 39 8E E3 3F`) is not in this build. None of them is written, as before (section 1).
 
-The camera classes, from the UTF-16 class-name strings (228 names contain `Camera`): the Double Exposure set is still there (`UChronosCameraArmComponent`, `UD9CameraArmComponent`, `UD9VertigoCameraComponent`, `UChronosCameraColliderComponent`, `UChronosAICameraControlComponent`, `AChronosCameraPawn`, `AD9CameraPawn`), plus Reunion's own: `AIrisPlayerCameraManager`, `UIrisCameraOverrideComponent`, `UIrisCameraRigOverrideComponent`, `UD9CameraRigComponent`, and, new, a cine-camera family: **`UD9CineCameraComponent`**, **`AD9CineCameraActor`**, `UD9CineCameraNoiseShake`, `UCineSetupSpeakerCameraAlignNode`, `CineSetupCameraData`, `UCineSetupCameraMetadata`. Engine 5.5's Gameplay Cameras plugin (`UGameplayCameraComponent`, the `*CameraNode` classes) is compiled in as well. Double Exposure had no `D9CineCamera` classes: its cutscenes were its own camera arms (3c), and the cine component only drove loading views, which is what cave B was for. A `UD9CineCameraComponent` derives from `UCineCameraComponent`, whose `GetCameraView` is the one direct caller of the base (13d), so with cave B in place every view such a component produces is boxed. That is the reading of 13h's narrow cutscenes, and the test in 13g item 1.
+The camera classes, from the UTF-16 class-name strings (228 names contain `Camera`): the Double Exposure set is still there (`UChronosCameraArmComponent`, `UD9CameraArmComponent`, `UD9VertigoCameraComponent`, `UChronosCameraColliderComponent`, `UChronosAICameraControlComponent`, `AChronosCameraPawn`, `AD9CameraPawn`), plus Reunion's own: `AIrisPlayerCameraManager`, `UIrisCameraOverrideComponent`, `UIrisCameraRigOverrideComponent`, `UD9CameraRigComponent`, and, new, a cine-camera family: **`UD9CineCameraComponent`**, **`AD9CineCameraActor`**, `UD9CineCameraNoiseShake`, `UCineSetupSpeakerCameraAlignNode`, `CineSetupCameraData`, `UCineSetupCameraMetadata`. Engine 5.5's Gameplay Cameras plugin (`UGameplayCameraComponent`, the `*CameraNode` classes) is compiled in as well. Double Exposure had no `D9CineCamera` classes: its cutscenes were its own camera arms (3c), and its only cine cameras are the menu and outfit-screen actors (2d). A `UD9CineCameraComponent` derives from `UCineCameraComponent`, whose `GetCameraView` is the one direct caller of the base (13d), so with cave B in place every view such a component produces is boxed. That is the reading of 13h's narrow cutscenes, and the test in 13g item 1.
 
 ### 13g. Still Open
 
