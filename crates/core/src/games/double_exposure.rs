@@ -127,6 +127,7 @@ static DE_UI: UiFix = UiFix {
     design: (3840.0, 2160.0),
     edits: DE_EDITS,
     reslots: &[],
+    masks: Some("VFX/MajorChoice/Masks/"),
     toc_version: 5,
     container_header_version: 2,
     summary: Summary::Ue52,

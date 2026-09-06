@@ -153,6 +153,7 @@ static REUNION_UI: UiFix = UiFix {
     design: (3840.0, 2160.0),
     edits: REUNION_EDITS,
     reslots: REUNION_RESLOTS,
+    masks: Some("VFX/MajorChoice/Masks/"),
     toc_version: 8,
     container_header_version: 4,
     summary: Summary::Ue53,
