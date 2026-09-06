@@ -6,6 +6,7 @@ A native ultrawide fix for **Life is Strange: Double Exposure** and **Life is St
 - No camera zoom or snap when a dialogue or cutscene ends.
 - Photos and Max's Polaroids keep their correct proportions.
 - Loading screens and HUD elements use the full width of the screen.
+- The pre-rendered recap video in Reunion keeps its proportions.
 - Optional: disable chromatic aberration and reduce blurriness.
 
 The game's own files are never modified: the camera fix is a small library the game loads at start, and the UI fix is a mod container next to the game data. Nothing runs in the background, nothing is downloaded, nothing is installed system-wide, and there is no performance impact. Everything can be undone with a single **Restore** button.
@@ -96,7 +97,7 @@ Then pick **Native** in the game's Steam properties; 5120x2160 is not in Steam's
 | Option | Effect | Changes |
 | :--- | :--- | :--- |
 | **Ultrawide camera** | Full-width cutscenes, dialogue and exploration | adds `winhttp.dll`, the loader, next to the game executable (`Chronos/Binaries/Win64` or `Iris/Binaries/Win64`) |
-| **Full-width UI** (Double Exposure) | Loading screens and HUD use the whole screen | adds `Content/Paks/Mods/LiSUltrawideUI_P.*` |
+| **Full-width UI** | Loading screens and HUD use the whole screen; the recap video keeps its proportions | adds `Content/Paks/Mods/LiSUltrawideUI_P.*` next to the game data (`Chronos/Content/Paks` or `Iris/Content/Paks`) |
 | **Disable chromatic aberration** | Removes colour fringing at the edges | `Engine.ini` |
 | **Reduce blurriness** | Recommended TSR settings for your resolution (off by default) | `Engine.ini` |
 
@@ -112,7 +113,7 @@ The loader writes `LiSUltrawideCamera.log` next to itself at every launch, sayin
 - **The camera fix is not active:** open `LiSUltrawideCamera.log` next to the game executable. It says whether the loader ran, what it found, and why it applied nothing. If it says the game's build is not one the fix knows, a new version of the fix is needed. If there is no log at all, the game did not load the library: on Linux, see the launch-option note above.
 - **The installer says another winhttp.dll is next to the game:** another mod's loader uses the same name. Only one can load, so move it away, or untick the camera part.
 - **A cutscene shows black bars:** report which scene, so its camera can be included.
-- **The UI is still 16:9 in game (Double Exposure):** check that `Chronos/Content/Paks/Mods/LiSUltrawideUI_P.utoc`, `.ucas` and `.pak` are all present. If they are, open an issue with your resolution.
+- **The UI is still 16:9 in game:** check that `Content/Paks/Mods/LiSUltrawideUI_P.utoc`, `.ucas` and `.pak` are all present under `Chronos` (Double Exposure) or `Iris` (Reunion). If they are, open an issue with your resolution.
 - **"Could not locate Engine.ini" on Linux or the Steam Deck:** start the game once, quit, and run the installer again.
 
 ### Still broken?

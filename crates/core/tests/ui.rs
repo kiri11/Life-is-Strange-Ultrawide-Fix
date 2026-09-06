@@ -21,7 +21,7 @@ use lis_ultrawide_core::iostore::{
     CHUNK_CONTAINER_HEADER, StoreEntry, Toc, build_container_header, load_script_objects, lookup, package_id_of,
     parse_container_header,
 };
-use lis_ultrawide_core::ui_layout::{build_mod, design_space, slot_payload};
+use lis_ultrawide_core::ui_layout::{build_mod, design_space, slot_payload, slot_payload_in};
 use lis_ultrawide_core::unver::Slot;
 use lis_ultrawide_core::zen::{ScriptObjects, Summary, ZenPackage};
 use lis_ultrawide_core::{hash, to_hex};
@@ -296,7 +296,7 @@ fn reads_and_rewrites_reunions_ui_packages() {
     for l in &lines {
         eprintln!("{l}");
     }
-    assert_eq!((built.applied, built.failed), (16, 0));
+    assert_eq!((built.applied, built.failed), (17, 0));
 
     let dir = std::env::temp_dir().join(format!("lis-reunion-ui-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -305,11 +305,44 @@ fn reads_and_rewrites_reunions_ui_packages() {
     std::fs::write(base.with_extension("ucas"), &built.ucas).unwrap();
     let mut mod_toc = Toc::open(&base.with_extension("utoc")).unwrap();
     assert_eq!(mod_toc.version, 8);
-    assert_eq!(mod_toc.entries(), 17);
-    assert_eq!(mod_toc.index.len(), 16);
+    assert_eq!(mod_toc.entries(), 18);
+    assert_eq!(mod_toc.index.len(), 17);
     let mh = mod_toc.find_type(CHUNK_CONTAINER_HEADER).unwrap();
     let (_, mod_entries) = parse_container_header(&mod_toc.read(mh).unwrap(), 4).unwrap();
-    assert_eq!(mod_entries.len(), 16);
+    assert_eq!(mod_entries.len(), 17);
+
+    // 13j: the video window's image slot is re-serialised and its export
+    // grows; every other export's payload, and the bytes after the last
+    // one, must come back as they were
+    let vpath = "Iris/Content/UI/BP/Window/BP_VideoWindow.uasset";
+    let stock = toc.read(toc.index[vpath]).unwrap();
+    assert_eq!(stock.len(), 4383);
+    assert_eq!(to_hex(&hash::sha256(&stock)), "6cfc4fc8702362a0370a9eea5020101920358b9f9a90e9a95db30080af860200");
+    let data = mod_toc.read(mod_toc.index[vpath]).unwrap();
+    let stock_pkg = ZenPackage::parse(&stock, Summary::Ue53).unwrap();
+    let pkg = ZenPackage::parse(&data, Summary::Ue53).unwrap();
+    assert_eq!(pkg.exports.len(), stock_pkg.exports.len());
+    assert_eq!(pkg.header_size, stock_pkg.header_size);
+    let (video, slot, _, payload) = slot_payload_in(&pkg, "D9Image", Some("MainPanel"), &so).unwrap();
+    assert_eq!(video, 2);
+    assert_eq!(slot.offsets, [640.0, 0.0, 640.0, -1.0]);
+    assert_eq!(slot.anchor_max, (1.0, 1.0));
+    assert_eq!(payload.len(), 86);
+    assert_eq!(data.len(), stock.len() + 86 - 43);
+    let mut tail_matches = 0;
+    for (e, s) in pkg.exports.iter().zip(&stock_pkg.exports) {
+        assert_eq!(e.name, s.name);
+        if e.index == video {
+            continue;
+        }
+        assert_eq!(pkg.export_data(e), stock_pkg.export_data(s), "{}", e.name);
+        tail_matches += 1;
+    }
+    assert_eq!(tail_matches, 17);
+    let last = pkg.exports.iter().map(|e| pkg.export_offset(e.index).unwrap() + e.size as usize).max().unwrap();
+    let stock_last = stock_pkg.exports.iter().map(|e| stock_pkg.export_offset(e.index).unwrap() + e.size as usize).max().unwrap();
+    assert_eq!(&data[last..], &stock[stock_last..]);
+    assert_eq!(data.len() - last, 4);
     for p in REUNION_PACKAGES {
         let stock = toc.read(toc.index[p.path]).unwrap();
         let idx = mod_toc.index[p.path];

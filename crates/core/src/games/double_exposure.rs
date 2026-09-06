@@ -126,6 +126,7 @@ static DE_UI: UiFix = UiFix {
     mod_name: "LiSUltrawideUI_P",
     design: (3840.0, 2160.0),
     edits: DE_EDITS,
+    reslots: &[],
     toc_version: 5,
     container_header_version: 2,
     summary: Summary::Ue52,

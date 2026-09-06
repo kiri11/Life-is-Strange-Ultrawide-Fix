@@ -8,8 +8,10 @@
 //! elements the audit (9c-2) found positioned by absolute coordinates on
 //! the 3840 canvas, which would otherwise shift left.
 //!
-//! Every edit rewrites an *existing* float in place, so package sizes never
-//! change. The edited packages are published as their own small IoStore
+//! An [`Edit`] rewrites an *existing* float in place, so the package keeps
+//! its size. A [`Reslot`] re-serialises a whole slot, for a value the cooked
+//! payload leaves out as a default (RESEARCH 13j), which resizes one export
+//! and moves the ones after it. The edited packages are published as their own small IoStore
 //! container in `Content/Paks/Mods/`, which the engine mounts after
 //! `pakchunk0` and which therefore shadows the copies in it. `pakchunk0` is
 //! only ever read, so Steam's Verify Integrity has nothing to repair, a game
@@ -31,8 +33,8 @@ use crate::iostore::{
 };
 use crate::json::{self, Value};
 use crate::report::{InstallError, Report, Result, replace_file, write_failure};
-use crate::unver::{Slot, decode_slot};
-use crate::zen::{ScriptObjects, Summary, ZenPackage};
+use crate::unver::{Slot, decode_slot, decode_slot_len, encode_slot};
+use crate::zen::{ScriptObjects, Summary, ZenPackage, replace_export};
 
 pub const MOD_DIR: &str = "Mods";
 pub const RECORD_VERSION: u64 = 1;
@@ -70,6 +72,8 @@ pub enum NewValue {
     Inset(f64),
     /// Right-anchored: the same, mirrored.
     Outset(f64),
+    /// This value, whatever the design space.
+    Value(f64),
 }
 
 impl NewValue {
@@ -79,8 +83,27 @@ impl NewValue {
             NewValue::HalfWidth => design_w / 2.0,
             NewValue::Inset(v) => v + (design_w - authored.0) / 2.0,
             NewValue::Outset(v) => v - (design_w - authored.0) / 2.0,
+            NewValue::Value(v) => v,
         }
     }
+}
+
+/// A slot rewritten whole: its four offsets set at once, the payload
+/// re-serialised and the export resized. For fields the cooked payload
+/// leaves out, which an [`Edit`] cannot reach.
+#[derive(Debug)]
+pub struct Reslot {
+    /// Below [`UiFix::ui_prefix`].
+    pub package: &'static str,
+    /// The widget the slot holds (its `Content`).
+    pub widget: &'static str,
+    /// The panel the slot is in, when the widget's name is not unique in
+    /// the package.
+    pub parent: Option<&'static str>,
+    /// The offsets the slot must currently have.
+    pub old: [f32; 4],
+    /// Left, Top, Right, Bottom.
+    pub new: [NewValue; 4],
 }
 
 /// One float rewritten in place in one package.
@@ -112,6 +135,7 @@ pub struct UiFix {
     /// The UMG design size the UI was authored for.
     pub design: (f64, f64),
     pub edits: &'static [Edit],
+    pub reslots: &'static [Reslot],
     /// The formats the game's own containers use, which the mod copies.
     pub toc_version: u8,
     pub container_header_version: u32,
@@ -333,6 +357,16 @@ fn open_toc(path: &Path) -> Result<Toc> {
 /// The `UCanvasPanelSlot` whose `Content` is `widget`: the export, the slot,
 /// the payload's offset in the chunk, and the payload itself.
 pub fn slot_payload<'a>(pkg: &ZenPackage<'a>, widget: &str, so: &ScriptObjects) -> Option<(usize, Slot, usize, &'a [u8])> {
+    slot_payload_in(pkg, widget, None, so)
+}
+
+/// The same, in the panel named `parent` when one is given.
+pub fn slot_payload_in<'a>(
+    pkg: &ZenPackage<'a>,
+    widget: &str,
+    parent: Option<&str>,
+    so: &ScriptObjects,
+) -> Option<(usize, Slot, usize, &'a [u8])> {
     for e in &pkg.exports {
         let Some(class) = pkg.script_class(e.class, so) else { continue };
         if class.strip_prefix("/Script/").unwrap_or(class) != "UMG.CanvasPanelSlot" {
@@ -341,12 +375,56 @@ pub fn slot_payload<'a>(pkg: &ZenPackage<'a>, widget: &str, so: &ScriptObjects) 
         let payload = pkg.export_data(e)?;
         let Ok(s) = decode_slot(payload) else { continue };
         let content = s.content_export().and_then(|i| pkg.exports.get(i));
-        if content.is_some_and(|c| c.name == widget) {
-            return Some((e.index, s, pkg.export_offset(e.index)?, payload));
+        if !content.is_some_and(|c| c.name == widget) {
+            continue;
         }
+        if let Some(parent) = parent {
+            let p = (s.parent > 0).then(|| pkg.exports.get((s.parent - 1) as usize)).flatten();
+            if !p.is_some_and(|p| p.name == parent) {
+                continue;
+            }
+        }
+        return Some((e.index, s, pkg.export_offset(e.index)?, payload));
     }
     None
 }
+
+/// The four offsets a reslot writes.
+fn reslot_values(rs: &Reslot, design_w: f64, ui: &UiFix) -> [f32; 4] {
+    rs.new.map(|v| v.apply(design_w, ui.design) as f32)
+}
+
+fn offsets_text(o: [f32; 4]) -> String {
+    format!("({})", o.iter().map(|&v| g(v as f64)).collect::<Vec<_>>().join(", "))
+}
+
+/// Re-serialise one slot of a package in memory -> the new package bytes,
+/// or why not.
+fn apply_reslot(buf: &[u8], ui: &UiFix, rs: &Reslot, design_w: f64, so: &ScriptObjects) -> std::result::Result<(Vec<u8>, String), String> {
+    let pkg = ZenPackage::parse(buf, ui.summary).map_err(|e| format!("cannot parse ({e})"))?;
+    let (export, slot, _, payload) = slot_payload_in(&pkg, rs.widget, rs.parent, so).ok_or("slot not found")?;
+    if slot.offsets != rs.old {
+        return Err(format!("offsets are {}, expected {} - skipped", offsets_text(slot.offsets), offsets_text(rs.old)));
+    }
+    let (_, used) = decode_slot_len(payload).map_err(|e| format!("slot payload: {e}"))?;
+    if payload[used..] != [0, 0, 0, 0] {
+        return Err(format!("{} unexpected bytes after the slot's properties - skipped", payload.len() - used));
+    }
+    let mut new = slot.clone();
+    new.offsets = reslot_values(rs, design_w, ui);
+    let encoded = encode_slot(&new);
+    let out = replace_export(buf, ui.summary, export, &encoded)?;
+    let note = format!(
+        "  {:<26} offsets {} -> {} ({} -> {} bytes)",
+        rs.widget,
+        offsets_text(slot.offsets),
+        offsets_text(new.offsets),
+        payload.len(),
+        encoded.len()
+    );
+    Ok((out, note))
+}
+
 
 fn find_unique_float(payload: &[u8], value: f32) -> std::result::Result<usize, String> {
     let hits: Vec<usize> = (0..payload.len().saturating_sub(3))
@@ -358,14 +436,21 @@ fn find_unique_float(payload: &[u8], value: f32) -> std::result::Result<usize, S
     Ok(hits[0])
 }
 
-/// The edits grouped by package, in order of first appearance.
-fn by_package(ui: &UiFix) -> Vec<(String, Vec<&'static Edit>)> {
-    let mut out: Vec<(String, Vec<&'static Edit>)> = Vec::new();
+/// The edits and reslots grouped by package, in order of first appearance.
+fn by_package(ui: &UiFix) -> Vec<(String, Vec<&'static Edit>, Vec<&'static Reslot>)> {
+    let mut out: Vec<(String, Vec<&'static Edit>, Vec<&'static Reslot>)> = Vec::new();
     for e in ui.edits {
         let path = format!("{}{}", ui.ui_prefix, e.package);
-        match out.iter_mut().find(|(p, _)| *p == path) {
-            Some((_, list)) => list.push(e),
-            None => out.push((path, vec![e])),
+        match out.iter_mut().find(|(p, _, _)| *p == path) {
+            Some((_, list, _)) => list.push(e),
+            None => out.push((path, vec![e], Vec::new())),
+        }
+    }
+    for r in ui.reslots {
+        let path = format!("{}{}", ui.ui_prefix, r.package);
+        match out.iter_mut().find(|(p, _, _)| *p == path) {
+            Some((_, _, list)) => list.push(r),
+            None => out.push((path, Vec::new(), vec![r])),
         }
     }
     out
@@ -400,7 +485,7 @@ pub fn build_mod(paks: &Path, ui: &UiFix, design_w: f64, so: &ScriptObjects, r: 
     let mut chunks: Vec<Chunk> = Vec::new();
     let mut entries: BTreeMap<u64, StoreEntry> = BTreeMap::new();
     let (mut applied, mut failed) = (0, 0);
-    for (pkg_path, edits) in by_package(ui) {
+    for (pkg_path, edits, reslots) in by_package(ui) {
         let name = short_name(ui, &pkg_path);
         let Some(&idx) = toc.index.get(&pkg_path) else {
             r.line(&format!("  SKIP {:<34} not in {}", name, ui.source));
@@ -451,6 +536,18 @@ pub fn build_mod(paks: &Path, ui: &UiFix, design_w: f64, so: &ScriptObjects, r: 
             buf[base + off..base + off + 4].copy_from_slice(&(val as f32).to_le_bytes());
             notes.push(format!("  {:<26} {:<6} {} -> {}", edit.widget, edit.field.name(), g(edit.old as f64), g(val)));
             done += 1;
+        }
+        // after the in-place edits: each reslot moves what follows it, so
+        // each one re-reads the buffer it is given
+        for rs in reslots {
+            match apply_reslot(&buf, ui, rs, design_w, so) {
+                Ok((out, note)) => {
+                    buf = out;
+                    notes.push(note);
+                    done += 1;
+                }
+                Err(e) => notes.push(format!("  !! {}: {e}", rs.widget)),
+            }
         }
 
         r.line(&name);
@@ -504,10 +601,23 @@ fn verify_mod(paks: &Path, ui: &UiFix, design_w: f64, so: &ScriptObjects, r: &mu
     r.line("verifying through the container reader...");
     let mut toc = open_toc(&mod_paths(paks, ui).utoc)?;
     let mut bad = 0;
-    for (pkg_path, edits) in by_package(ui) {
+    for (pkg_path, edits, reslots) in by_package(ui) {
         let Some(&idx) = toc.index.get(&pkg_path) else { continue };
         let data = read_chunk(&mut toc, idx, &format!("{}: {pkg_path}", ui.mod_name))?;
         let pkg = ZenPackage::parse(&data, ui.summary).map_err(|e| InstallError(format!("cannot parse {pkg_path} ({e})")))?;
+        for rs in reslots {
+            let want = reslot_values(rs, design_w, ui);
+            let got = slot_payload_in(&pkg, rs.widget, rs.parent, so).map(|(_, s, _, _)| s.offsets);
+            if got.is_none_or(|got| got.iter().zip(want).any(|(g, w)| (g - w).abs() > 0.5)) {
+                r.line(&format!(
+                    "  MISMATCH {} offsets = {} (want {})",
+                    rs.widget,
+                    got.map(offsets_text).unwrap_or_else(|| "None".into()),
+                    offsets_text(want)
+                ));
+                bad += 1;
+            }
+        }
         for edit in edits {
             let want = edit.new.apply(design_w, ui.design);
             let got = slot_payload(&pkg, edit.widget, so).map(|(_, s, _, _)| s.offsets[edit.field as usize] as f64);
