@@ -14,7 +14,7 @@
 use crate::camera::cave_a_reunion;
 use crate::plan::{Plan, Site, Write, locate, rel32};
 use crate::scan::{Image, find_cave};
-use crate::ui_layout::{Edit, Field, NewValue, UiFix};
+use crate::ui_layout::{Edit, Field, NewValue, Reslot, UiFix};
 use crate::zen::Summary;
 
 use super::Game;
@@ -131,6 +131,19 @@ static REUNION_EDITS: &[Edit] = &[
     edit!("BP/Window/BP_TitleWindow.uasset", "PressAnyKey", Left, 220.0, NewValue::Inset(220.0)),
 ];
 
+/// RESEARCH.md 13j: the recap video. `BP_VideoWindow` draws the Bink
+/// texture on a `D9Image` stretched across the window, so the widened
+/// `WindowParent` stretches the picture. The image is inset on both sides
+/// to the centred 16:9 band; the window's black shows either side. Left
+/// and Right are absent from the cooked payload, hence a reslot.
+static REUNION_RESLOTS: &[Reslot] = &[Reslot {
+    package: "BP/Window/BP_VideoWindow.uasset",
+    widget: "D9Image",
+    parent: Some("MainPanel"),
+    old: [0.0, 0.0, 0.0, -1.0],
+    new: [NewValue::Inset(0.0), NewValue::Value(0.0), NewValue::Inset(0.0), NewValue::Value(-1.0)],
+}];
+
 static REUNION_UI: UiFix = UiFix {
     source: "pakchunk0-Windows",
     content_prefix: "Iris/Content/",
@@ -139,6 +152,7 @@ static REUNION_UI: UiFix = UiFix {
     mod_name: "LiSUltrawideUI_P",
     design: (3840.0, 2160.0),
     edits: REUNION_EDITS,
+    reslots: REUNION_RESLOTS,
     toc_version: 8,
     container_header_version: 4,
     summary: Summary::Ue53,

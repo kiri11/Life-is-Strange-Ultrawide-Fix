@@ -91,6 +91,10 @@ pub struct Slot {
     /// 1-based `FPackageIndex`; 0 when absent.
     pub parent: i32,
     pub content: i32,
+    /// `bAutoSize` and `ZOrder`, when the payload carries them; they are
+    /// kept as they were when a slot is re-encoded.
+    pub auto_size: Option<bool>,
+    pub z_order: Option<i32>,
 }
 
 impl Slot {
@@ -101,6 +105,13 @@ impl Slot {
 }
 
 pub fn decode_slot(d: &[u8]) -> Result<Slot, String> {
+    decode_slot_len(d).map(|(s, _)| s)
+}
+
+/// The slot and how many bytes of the payload its properties took; what
+/// follows is the object's own trailer (four zero bytes in this game's
+/// packages: no GUID).
+pub fn decode_slot_len(d: &[u8]) -> Result<(Slot, usize), String> {
     let mut out = Slot {
         offsets: [0.0, 0.0, 100.0, 100.0],
         anchor_min: (0.0, 0.0),
@@ -108,6 +119,8 @@ pub fn decode_slot(d: &[u8]) -> Result<Slot, String> {
         alignment: (0.0, 0.0),
         parent: 0,
         content: 0,
+        auto_size: None,
+        z_order: None,
     };
     let (props, mut p) = parse_header(d)?;
     for (idx, zero) in props {
@@ -168,8 +181,26 @@ pub fn decode_slot(d: &[u8]) -> Result<Slot, String> {
                     }
                 }
             }
-            1 => p += if zero { 0 } else { 1 }, // bAutoSize
-            2 => p += if zero { 0 } else { 4 }, // ZOrder
+            1 => {
+                // bAutoSize
+                out.auto_size = Some(if zero {
+                    false
+                } else {
+                    let v = *d.get(p).ok_or("truncated property value")? != 0;
+                    p += 1;
+                    v
+                });
+            }
+            2 => {
+                // ZOrder
+                out.z_order = Some(if zero {
+                    0
+                } else {
+                    let v = u32_at(d, p)? as i32;
+                    p += 4;
+                    v
+                });
+            }
             3 | 4 => {
                 // Parent / Content (FPackageIndex, 1-based)
                 let v = if zero {
@@ -188,12 +219,111 @@ pub fn decode_slot(d: &[u8]) -> Result<Slot, String> {
             _ => return Err(format!("unknown UCanvasPanelSlot field {idx}")),
         }
     }
-    Ok(out)
+    Ok((out, p))
+}
+
+/// An unversioned header naming exactly `present` (ascending schema
+/// indices), every value written out: no zero mask.
+pub fn encode_header(present: &[usize]) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut next = 0;
+    let mut i = 0;
+    while i < present.len() {
+        let skip = present[i] - next;
+        let mut n = 1;
+        while i + n < present.len() && present[i + n] == present[i] + n && n < 127 {
+            n += 1;
+        }
+        i += n;
+        next = present[i - 1] + 1;
+        let last = i == present.len();
+        let packed = (skip as u16) | ((n as u16) << 9) | if last { 0x100 } else { 0 };
+        out.extend_from_slice(&packed.to_le_bytes());
+    }
+    out
+}
+
+/// The slot as a payload the engine reads back to the same values: every
+/// field explicit (the zero mask is only an optimisation), and the four
+/// zero trailer bytes of an object without a GUID.
+pub fn encode_slot(s: &Slot) -> Vec<u8> {
+    let mut top = vec![0];
+    if s.auto_size.is_some() {
+        top.push(1);
+    }
+    if s.z_order.is_some() {
+        top.push(2);
+    }
+    top.extend([3, 4]);
+    let mut out = encode_header(&top);
+    // LayoutData: Offsets, Anchors, Alignment
+    out.extend(encode_header(&[0, 1, 2]));
+    out.extend(encode_header(&[0, 1, 2, 3]));
+    for v in s.offsets {
+        out.extend_from_slice(&v.to_le_bytes());
+    }
+    out.extend(encode_header(&[0, 1]));
+    for (x, y) in [s.anchor_min, s.anchor_max, s.alignment] {
+        out.extend_from_slice(&x.to_le_bytes());
+        out.extend_from_slice(&y.to_le_bytes());
+    }
+    if let Some(b) = s.auto_size {
+        out.push(b as u8);
+    }
+    if let Some(z) = s.z_order {
+        out.extend_from_slice(&z.to_le_bytes());
+    }
+    out.extend_from_slice(&s.parent.to_le_bytes());
+    out.extend_from_slice(&s.content.to_le_bytes());
+    out.extend_from_slice(&[0; 4]);
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// `BP_VideoWindow`'s video image slot (RESEARCH 13j): Left and Top
+    /// absent, Right zero-masked, Bottom -1, only the anchor maximum set.
+    const VIDEO_SLOT: [u8; 43] = [
+        0x00, 0x02, 0x02, 0x05, 0x00, 0x05, 0x82, 0x05, 0x01, 0x00, 0x00, 0x80, 0xbf, 0x01, 0x03, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0xf0, 0x3f, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xf0, 0x3f, 0x0a, 0x00, 0x00, 0x00, 0x0c, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x00, 0x00,
+    ];
+
+    #[test]
+    fn encodes_headers() {
+        assert_eq!(encode_header(&[0]), vec![0x00, 0x03]);
+        assert_eq!(encode_header(&[0, 1, 2, 3]), vec![0x00, 0x09]);
+        assert_eq!(encode_header(&[0, 3, 4]), vec![0x00, 0x02, 0x02, 0x05]);
+        assert_eq!(encode_header(&[1]), vec![0x01, 0x03]);
+        for present in [&[0usize, 3, 4][..], &[0, 1, 2, 3, 4], &[2, 5], &[0, 1, 2]] {
+            let (props, used) = parse_header(&encode_header(present)).unwrap();
+            assert_eq!(used, encode_header(present).len());
+            assert_eq!(props, present.iter().map(|&i| (i, false)).collect::<Vec<_>>());
+        }
+    }
+
+    #[test]
+    fn a_slot_survives_encoding() {
+        let (slot, used) = decode_slot_len(&VIDEO_SLOT).unwrap();
+        assert_eq!(used, 39);
+        assert_eq!(&VIDEO_SLOT[used..], &[0, 0, 0, 0]);
+        assert_eq!(slot.offsets, [0.0, 0.0, 0.0, -1.0]);
+        assert_eq!(slot.anchor_max, (1.0, 1.0));
+        assert_eq!((slot.parent, slot.content, slot.auto_size, slot.z_order), (10, 12, None, None));
+
+        let mut wide = slot.clone();
+        wide.offsets = [640.0, 0.0, 640.0, -1.0];
+        let bytes = encode_slot(&wide);
+        assert_eq!(bytes.len(), 86);
+        let (back, used) = decode_slot_len(&bytes).unwrap();
+        assert_eq!(back, wide);
+        assert_eq!(&bytes[used..], &[0, 0, 0, 0]);
+
+        let full = Slot { auto_size: Some(true), z_order: Some(-3), ..wide };
+        assert_eq!(decode_slot(&encode_slot(&full)).unwrap(), full);
+    }
 
     #[test]
     fn header_fragments_and_zero_mask() {

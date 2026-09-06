@@ -241,3 +241,37 @@ impl<'a> ZenPackage<'a> {
         }
     }
 }
+
+/// The package with export `index`'s payload replaced by `payload`, which
+/// may be a different size: the export map's size for it and the cooked
+/// offsets of every export stored after it move by the difference, and so
+/// do the bytes. Nothing else in the header measures payloads. UE 5.3+
+/// only: the 5.2 layout stores payloads in export-bundle order with the
+/// bundle offsets in the graph data, which nothing needs yet.
+pub fn replace_export(buf: &[u8], summary: Summary, index: usize, payload: &[u8]) -> Result<Vec<u8>, String> {
+    if summary != Summary::Ue53 {
+        return Err("resizing an export is only implemented for the UE 5.3+ package layout".into());
+    }
+    let pkg = ZenPackage::parse(buf, summary)?;
+    let e = pkg.exports.get(index).ok_or("no such export")?;
+    let start = pkg.export_offset(index).ok_or("export has no payload")?;
+    let end = start + e.size as usize;
+    if end > buf.len() {
+        return Err("export payload runs past the package".into());
+    }
+    let delta = payload.len() as i64 - e.size as i64;
+    let export_off = u32_at(buf, 32)? as usize;
+    let mut out = Vec::with_capacity((buf.len() as i64 + delta) as usize);
+    out.extend_from_slice(&buf[..start]);
+    out.extend_from_slice(payload);
+    out.extend_from_slice(&buf[end..]);
+    for x in &pkg.exports {
+        let o = export_off + 72 * x.index;
+        if x.index == index {
+            out[o + 8..o + 16].copy_from_slice(&(payload.len() as u64).to_le_bytes());
+        } else if x.cooked_offset > e.cooked_offset {
+            out[o..o + 8].copy_from_slice(&((x.cooked_offset as i64 + delta) as u64).to_le_bytes());
+        }
+    }
+    Ok(out)
+}
