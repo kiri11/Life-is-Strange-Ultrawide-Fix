@@ -11,7 +11,10 @@
 //! An [`Edit`] rewrites an *existing* float in place, so the package keeps
 //! its size. A [`Reslot`] re-serialises a whole slot, for a value the cooked
 //! payload leaves out as a default (RESEARCH 13j), which resizes one export
-//! and moves the ones after it. The edited packages are published as their own small IoStore
+//! and moves the ones after it. The major-choice masks ([`UiFix::masks`],
+//! RESEARCH 13k) are textures the post-process samples in screen space,
+//! re-fitted for the display and re-encoded at the same size. The edited
+//! packages are published as their own small IoStore
 //! container in `Content/Paks/Mods/`, which the engine mounts after
 //! `pakchunk0` and which therefore shadows the copies in it. `pakchunk0` is
 //! only ever read, so Steam's Verify Integrity has nothing to repair, a game
@@ -26,6 +29,7 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 
+use crate::bc;
 use crate::hash;
 use crate::iostore::{
     self, CHUNK_CONTAINER_HEADER, Chunk, ReadError, StoreEntry, Toc, build_container, container_header_chunk_id,
@@ -33,6 +37,7 @@ use crate::iostore::{
 };
 use crate::json::{self, Value};
 use crate::report::{InstallError, Report, Result, replace_file, write_failure};
+use crate::texture::parse_texture;
 use crate::unver::{Slot, decode_slot, decode_slot_len, encode_slot};
 use crate::zen::{ScriptObjects, Summary, ZenPackage, replace_export};
 
@@ -136,6 +141,11 @@ pub struct UiFix {
     pub design: (f64, f64),
     pub edits: &'static [Edit],
     pub reslots: &'static [Reslot],
+    /// The folder, below [`UiFix::content_prefix`], of the screen masks
+    /// the major-choice post-process samples (RESEARCH 13k). Every texture
+    /// in it is squeezed into the centre 16:9 band of a display wider than
+    /// that, so that the tint keeps lining up with the picture.
+    pub masks: Option<&'static str>,
     /// The formats the game's own containers use, which the mod copies.
     pub toc_version: u8,
     pub container_header_version: u32,
@@ -425,6 +435,61 @@ fn apply_reslot(buf: &[u8], ui: &UiFix, rs: &Reslot, design_w: f64, so: &ScriptO
     Ok((out, note))
 }
 
+/// The mask textures a game's fix re-fits: directory index path and chunk
+/// index, in index order.
+fn mask_packages(toc: &Toc, ui: &UiFix) -> Vec<(String, usize)> {
+    let Some(prefix) = ui.masks else { return Vec::new() };
+    let full = format!("{}{}", ui.content_prefix, prefix);
+    toc.index.iter().filter(|(p, _)| p.starts_with(&full) && p.ends_with(".uasset")).map(|(p, &i)| (p.clone(), i)).collect()
+}
+
+/// How much wider than 16:9 the design space is: the factor the masks are
+/// squeezed by. 1 at 16:9 and below.
+fn mask_factor(design_w: f64, ui: &UiFix) -> f64 {
+    design_w / ui.design.0
+}
+
+fn mask_name(ui: &UiFix, pkg_path: &str) -> String {
+    let prefix = format!("{}{}", ui.content_prefix, ui.masks.unwrap_or(""));
+    pkg_path.strip_prefix(&prefix).unwrap_or(pkg_path).trim_end_matches(".uasset").to_string()
+}
+
+/// One mask texture package with every mip re-fitted in place -> the
+/// chunk to publish, its package id and store entry, and a note for the
+/// log.
+fn refit_mask(
+    toc: &mut Toc,
+    stock: &BTreeMap<u64, StoreEntry>,
+    ui: &UiFix,
+    pkg_path: &str,
+    idx: usize,
+    factor: f64,
+) -> std::result::Result<(Chunk, u64, StoreEntry, String), String> {
+    let chunk_id = *toc.chunk_ids.get(idx).ok_or("directory index points past the chunk table")?;
+    let package_id = package_id_of(&chunk_id);
+    let entry = stock.get(&package_id).ok_or("no package store entry")?.clone();
+    let data = toc.read(idx).map_err(|e| format!("cannot read ({e})"))?;
+    let pkg = ZenPackage::parse(&data, ui.summary).map_err(|e| format!("cannot parse ({e})"))?;
+    if pkg.exports.len() != 1 {
+        return Err(format!("{} exports, expected one texture", pkg.exports.len()));
+    }
+    let export = &pkg.exports[0];
+    let base = pkg.export_offset(0).ok_or("export has no payload")?;
+    let payload = pkg.export_data(export).ok_or("export payload runs past the package")?;
+    let tex = parse_texture(payload)?;
+    let format = tex.format.ok_or_else(|| format!("{} is not a format the fix re-encodes", tex.format_name))?;
+    let mut buf = data.clone();
+    for m in &tex.mips {
+        let img = bc::decode(format, m.width, m.height, &payload[m.offset..m.offset + m.len])?;
+        let out = bc::encode(format, &bc::refit(&img, factor));
+        if out.len() != m.len {
+            return Err(format!("re-encoded mip is {} bytes, the original {}", out.len(), m.len));
+        }
+        buf[base + m.offset..base + m.offset + m.len].copy_from_slice(&out);
+    }
+    let note = format!("{}x{} {}, {} mip{}", tex.width, tex.height, tex.format_name, tex.mips.len(), if tex.mips.len() == 1 { "" } else { "s" });
+    Ok((Chunk { id: chunk_id, data: buf, path: Some(pkg_path[ui.content_prefix.len()..].to_string()) }, package_id, entry, note))
+}
 
 fn find_unique_float(payload: &[u8], value: f32) -> std::result::Result<usize, String> {
     let hits: Vec<usize> = (0..payload.len().saturating_sub(3))
@@ -473,6 +538,12 @@ pub struct Built {
 
 /// Edit the packages in memory and build the mod container that carries them.
 pub fn build_mod(paks: &Path, ui: &UiFix, design_w: f64, so: &ScriptObjects, r: &mut dyn Report) -> Result<Built> {
+    build_mod_with(paks, ui, design_w, so, r, true)
+}
+
+/// [`build_mod`], with the mask textures optional: the comparison against
+/// the Python writer's container predates them.
+pub fn build_mod_with(paks: &Path, ui: &UiFix, design_w: f64, so: &ScriptObjects, r: &mut dyn Report, masks: bool) -> Result<Built> {
     let mut toc = open_toc(&paks.join(format!("{}.utoc", ui.source)))?;
     let header_index = toc
         .find_type(CHUNK_CONTAINER_HEADER)
@@ -566,6 +637,31 @@ pub fn build_mod(paks: &Path, ui: &UiFix, design_w: f64, so: &ScriptObjects, r: 
     if chunks.is_empty() {
         return Err(InstallError("none of the UI packages could be read - nothing to install.".into()));
     }
+
+    // RESEARCH 13k: the major-choice masks, only when the display is wider
+    // than the 16:9 they were painted for
+    let factor = mask_factor(design_w, ui);
+    if masks && factor > 1.001 {
+        let paths = mask_packages(&toc, ui);
+        r.line("");
+        r.line(&format!("{} major-choice masks, squeezed to the centre by {:.3}:", paths.len(), factor));
+        for (pkg_path, idx) in paths {
+            let name = mask_name(ui, &pkg_path);
+            match refit_mask(&mut toc, &stock_entries, ui, &pkg_path, idx, factor) {
+                Ok((chunk, package_id, entry, note)) => {
+                    r.line(&format!("  {name:<44} {note}"));
+                    chunks.push(chunk);
+                    entries.insert(package_id, entry);
+                    applied += 1;
+                }
+                Err(e) => {
+                    r.line(&format!("  SKIP {name:<39} {e}"));
+                    failed += 1;
+                }
+            }
+        }
+    }
+
     chunks.push(Chunk {
         id: container_header_chunk_id(container_id),
         data: iostore::build_container_header(container_id, &entries, ui.container_header_version),
@@ -601,6 +697,18 @@ fn verify_mod(paks: &Path, ui: &UiFix, design_w: f64, so: &ScriptObjects, r: &mu
     r.line("verifying through the container reader...");
     let mut toc = open_toc(&mod_paths(paks, ui).utoc)?;
     let mut bad = 0;
+    if mask_factor(design_w, ui) > 1.001 {
+        for (pkg_path, idx) in mask_packages(&toc, ui) {
+            let data = read_chunk(&mut toc, idx, &format!("{}: {pkg_path}", ui.mod_name))?;
+            let parsed = ZenPackage::parse(&data, ui.summary)
+                .map_err(|e| e.to_string())
+                .and_then(|pkg| pkg.exports.first().and_then(|e| pkg.export_data(e)).ok_or("no export".to_string()).and_then(|p| parse_texture(p)));
+            if let Err(e) = parsed {
+                r.line(&format!("  MISMATCH {} does not read back as a texture ({e})", mask_name(ui, &pkg_path)));
+                bad += 1;
+            }
+        }
+    }
     for (pkg_path, edits, reslots) in by_package(ui) {
         let Some(&idx) = toc.index.get(&pkg_path) else { continue };
         let data = read_chunk(&mut toc, idx, &format!("{}: {pkg_path}", ui.mod_name))?;

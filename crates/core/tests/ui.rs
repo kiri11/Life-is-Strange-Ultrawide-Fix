@@ -21,7 +21,9 @@ use lis_ultrawide_core::iostore::{
     CHUNK_CONTAINER_HEADER, StoreEntry, Toc, build_container_header, load_script_objects, lookup, package_id_of,
     parse_container_header,
 };
-use lis_ultrawide_core::ui_layout::{build_mod, design_space, slot_payload, slot_payload_in};
+use lis_ultrawide_core::bc;
+use lis_ultrawide_core::texture::parse_texture;
+use lis_ultrawide_core::ui_layout::{build_mod, build_mod_with, design_space, slot_payload, slot_payload_in};
 use lis_ultrawide_core::unver::Slot;
 use lis_ultrawide_core::zen::{ScriptObjects, Summary, ZenPackage};
 use lis_ultrawide_core::{hash, to_hex};
@@ -249,6 +251,82 @@ const REUNION_PACKAGES: &[PkgRef] = &[
         ] },
 ];
 
+/// RESEARCH 13k: every mask texture under `prefix` is in the mod container
+/// with its store entry unchanged, the same size, every byte outside the
+/// mips as it was, and each mip exactly what re-fitting the stock mip by
+/// `factor` and re-encoding gives.
+fn check_masks(toc: &mut Toc, mod_toc: &mut Toc, entries: &BTreeMap<u64, StoreEntry>, mod_entries: &BTreeMap<u64, StoreEntry>, prefix: &str, summary: Summary, factor: f64, count: usize) {
+    let paths: Vec<String> = mod_toc.index.keys().filter(|p| p.starts_with(prefix)).cloned().collect();
+    assert_eq!(paths.len(), count);
+    let mut formats = std::collections::BTreeSet::new();
+    for path in paths {
+        let stock = toc.read(toc.index[&path]).unwrap();
+        let idx = mod_toc.index[&path];
+        let data = mod_toc.read(idx).unwrap();
+        assert_eq!(data.len(), stock.len(), "{path}");
+        assert_eq!(mod_entries[&package_id_of(&mod_toc.chunk_ids[idx])], entries[&package_id_of(&toc.chunk_ids[toc.index[&path]])]);
+        let spkg = ZenPackage::parse(&stock, summary).unwrap();
+        let pkg = ZenPackage::parse(&data, summary).unwrap();
+        let base = pkg.export_offset(0).unwrap();
+        let stex = parse_texture(spkg.export_data(&spkg.exports[0]).unwrap()).unwrap();
+        let tex = parse_texture(pkg.export_data(&pkg.exports[0]).unwrap()).unwrap();
+        assert_eq!(tex, stex, "{path}");
+        let format = tex.format.unwrap();
+        formats.insert(tex.format_name.clone());
+        assert!(!tex.mips.is_empty());
+        let mut expected = stock.clone();
+        for m in &tex.mips {
+            let img = bc::decode(format, m.width, m.height, &stock[base + m.offset..base + m.offset + m.len]).unwrap();
+            let out = bc::encode(format, &bc::refit(&img, factor));
+            expected[base + m.offset..base + m.offset + m.len].copy_from_slice(&out);
+            // the squeezed mask keeps the stock mask's centre column and
+            // extends its edge columns: compare decoded pixels
+            let got = bc::decode(format, m.width, m.height, &data[base + m.offset..base + m.offset + m.len]).unwrap();
+            let want = bc::decode(format, m.width, m.height, &out).unwrap();
+            assert_eq!(got, want, "{path}: mip {}x{}", m.width, m.height);
+        }
+        assert!(data == expected, "{path}: bytes other than the mips changed");
+    }
+    eprintln!("mask formats: {formats:?}");
+    assert!(formats.contains("PF_DXT5"));
+}
+
+/// Double Exposure's masks (RESEARCH 13k), built for 5120x2160 and read
+/// back: 29 textures, DXT1 and DXT5, next to the ten UI packages.
+#[test]
+fn refits_double_exposures_masks() {
+    let Some(paks) = paks() else { return };
+    let game: &dyn Game = &DOUBLE_EXPOSURE;
+    let ui = game.ui().unwrap();
+    let so = load_script_objects(&paks.join("global.utoc")).unwrap();
+    let (dw, _) = design_space(5120, 2160, ui.design);
+    let mut lines = Vec::new();
+    let built = build_mod(&paks, ui, dw, &so, &mut lines).unwrap();
+    for l in &lines {
+        eprintln!("{l}");
+    }
+    assert_eq!((built.applied, built.failed), (10 + 29, 0));
+    let dir = std::env::temp_dir().join(format!("lis-de-masks-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let base = dir.join(ui.mod_name);
+    std::fs::write(base.with_extension("utoc"), &built.utoc).unwrap();
+    std::fs::write(base.with_extension("ucas"), &built.ucas).unwrap();
+    let mut toc = Toc::open(&paks.join("pakchunk0-Windows.utoc")).unwrap();
+    let h = toc.find_type(CHUNK_CONTAINER_HEADER).unwrap();
+    let (_, entries) = parse_container_header(&toc.read(h).unwrap(), 2).unwrap();
+    let mut mod_toc = Toc::open(&base.with_extension("utoc")).unwrap();
+    assert_eq!(mod_toc.index.len(), 10 + 29);
+    let mh = mod_toc.find_type(CHUNK_CONTAINER_HEADER).unwrap();
+    let (_, mod_entries) = parse_container_header(&mod_toc.read(mh).unwrap(), 2).unwrap();
+    check_masks(&mut toc, &mut mod_toc, &entries, &mod_entries, "Chronos/Content/VFX/MajorChoice/Masks/", Summary::Ue52, dw / 3840.0, 29);
+    // at 16:9 and narrower nothing is squeezed and no mask is published
+    let (dw169, _) = design_space(3840, 2160, ui.design);
+    let mut lines = Vec::new();
+    let built = build_mod(&paks, ui, dw169, &so, &mut lines).unwrap();
+    assert_eq!((built.applied, built.failed), (10, 0));
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Reunion (RESEARCH 13i): TOC version 8, container header version 4, the
 /// UE 5.3+ package summary. The values were captured on 2026-09-04 from the
 /// build installed then. The mod container is built for 5120x2160, written
@@ -296,7 +374,7 @@ fn reads_and_rewrites_reunions_ui_packages() {
     for l in &lines {
         eprintln!("{l}");
     }
-    assert_eq!((built.applied, built.failed), (17, 0));
+    assert_eq!((built.applied, built.failed), (17 + 19, 0));
 
     let dir = std::env::temp_dir().join(format!("lis-reunion-ui-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -305,11 +383,12 @@ fn reads_and_rewrites_reunions_ui_packages() {
     std::fs::write(base.with_extension("ucas"), &built.ucas).unwrap();
     let mut mod_toc = Toc::open(&base.with_extension("utoc")).unwrap();
     assert_eq!(mod_toc.version, 8);
-    assert_eq!(mod_toc.entries(), 18);
-    assert_eq!(mod_toc.index.len(), 17);
+    assert_eq!(mod_toc.entries(), 18 + 19);
+    assert_eq!(mod_toc.index.len(), 17 + 19);
     let mh = mod_toc.find_type(CHUNK_CONTAINER_HEADER).unwrap();
     let (_, mod_entries) = parse_container_header(&mod_toc.read(mh).unwrap(), 4).unwrap();
-    assert_eq!(mod_entries.len(), 17);
+    assert_eq!(mod_entries.len(), 17 + 19);
+    check_masks(&mut toc, &mut mod_toc, &entries, &mod_entries, "Iris/Content/VFX/MajorChoice/Masks/", Summary::Ue53, 5120.0 / 3840.0, 19);
 
     // 13j: the video window's image slot is re-serialised and its export
     // grows; every other export's payload, and the bytes after the last
@@ -382,7 +461,7 @@ fn builds_the_same_container_as_the_python_writer() {
     let so = load_script_objects(&paks.join("global.utoc")).unwrap();
     let (dw, _) = design_space(5120, 2160, ui.design);
     let mut lines = Vec::new();
-    let built = build_mod(&paks, ui, dw, &so, &mut lines).unwrap();
+    let built = build_mod_with(&paks, ui, dw, &so, &mut lines, false).unwrap();
     for l in &lines {
         eprintln!("{l}");
     }

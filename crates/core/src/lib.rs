@@ -20,6 +20,7 @@
 //! Which game is being fixed is a [`games::Game`] descriptor; adding a game
 //! is one module under `games/`.
 
+pub mod bc;
 pub mod camera;
 pub mod camera_ini;
 pub mod display;
@@ -36,6 +37,7 @@ pub mod plan;
 pub mod report;
 pub mod scan;
 pub mod steam;
+pub mod texture;
 pub mod zen;
 pub mod ui_layout;
 pub mod unver;

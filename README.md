@@ -6,7 +6,7 @@ A native ultrawide fix for **Life is Strange: Double Exposure** and **Life is St
 - No camera zoom or snap when a dialogue or cutscene ends.
 - Photos and Max's Polaroids keep their correct proportions.
 - Loading screens and HUD elements use the full width of the screen.
-- The pre-rendered recap video in Reunion keeps its proportions.
+- The coloured highlight of a major choice stays on what it highlights.
 - Optional: disable chromatic aberration and reduce blurriness.
 
 The game's own files are never modified: the camera fix is a small library the game loads at start, and the UI fix is a mod container next to the game data. Nothing runs in the background, nothing is downloaded, nothing is installed system-wide, and there is no performance impact. Everything can be undone with a single **Restore** button.
@@ -97,7 +97,7 @@ Then pick **Native** in the game's Steam properties; 5120x2160 is not in Steam's
 | Option | Effect | Changes |
 | :--- | :--- | :--- |
 | **Ultrawide camera** | Full-width cutscenes, dialogue and exploration | adds `winhttp.dll`, the loader, next to the game executable (`Chronos/Binaries/Win64` or `Iris/Binaries/Win64`) |
-| **Full-width UI** | Loading screens and HUD use the whole screen; the recap video keeps its proportions | adds `Content/Paks/Mods/LiSUltrawideUI_P.*` next to the game data (`Chronos/Content/Paks` or `Iris/Content/Paks`) |
+| **Full-width UI** | Loading screens and HUD use the whole screen; the major-choice highlight and the recap video keep their proportions | adds `Content/Paks/Mods/LiSUltrawideUI_P.*` next to the game data (`Chronos/Content/Paks` or `Iris/Content/Paks`) |
 | **Disable chromatic aberration** | Removes colour fringing at the edges | `Engine.ini` |
 | **Reduce blurriness** | Recommended TSR settings for your resolution (off by default) | `Engine.ini` |
 
