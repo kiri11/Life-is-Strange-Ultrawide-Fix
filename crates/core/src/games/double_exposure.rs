@@ -9,7 +9,7 @@
 use crate::camera::cave_a;
 use crate::plan::{Plan, Site, Write, locate, rel32};
 use crate::scan::{Image, find_cave};
-use crate::ui_layout::{Edit, Field, NewValue, UiFix};
+use crate::ui_layout::{Edit, Field, NewValue, Reslot, UiFix};
 use crate::zen::Summary;
 
 use super::Game;
@@ -118,6 +118,18 @@ static DE_EDITS: &[Edit] = &[
     edit!("BP/Window/BP_TitleWindow.uasset", "PressAnyKey", Left, 220.0, NewValue::Inset(220.0)),
 ];
 
+// Only the promotional artwork is inset; the screen's text, buttons and
+// background overlays keep their existing layout. RESEARCH.md 9f.
+static DE_RESLOTS: &[Reslot] = &[
+    Reslot {
+        package: "BP/Window/BP_DLCWarningWindow.uasset",
+        widget: "DLCImage",
+        parent: Some("MainPanel"),
+        old: [0.0; 4],
+        new: [NewValue::Inset(0.0), NewValue::Value(0.0), NewValue::Inset(0.0), NewValue::Value(0.0)],
+    },
+];
+
 static DE_UI: UiFix = UiFix {
     source: "pakchunk0-Windows",
     content_prefix: "Chronos/Content/",
@@ -126,7 +138,7 @@ static DE_UI: UiFix = UiFix {
     mod_name: "LiSUltrawideUI_P",
     design: (3840.0, 2160.0),
     edits: DE_EDITS,
-    reslots: &[],
+    reslots: DE_RESLOTS,
     masks: Some("VFX/MajorChoice/Masks/"),
     toc_version: 5,
     container_header_version: 2,

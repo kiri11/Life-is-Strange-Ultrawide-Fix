@@ -305,7 +305,7 @@ fn refits_double_exposures_masks() {
     for l in &lines {
         eprintln!("{l}");
     }
-    assert_eq!((built.applied, built.failed), (10 + 29, 0));
+    assert_eq!((built.applied, built.failed), (11 + 29, 0));
     let dir = std::env::temp_dir().join(format!("lis-de-masks-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let base = dir.join(ui.mod_name);
@@ -315,16 +315,84 @@ fn refits_double_exposures_masks() {
     let h = toc.find_type(CHUNK_CONTAINER_HEADER).unwrap();
     let (_, entries) = parse_container_header(&toc.read(h).unwrap(), 2).unwrap();
     let mut mod_toc = Toc::open(&base.with_extension("utoc")).unwrap();
-    assert_eq!(mod_toc.index.len(), 10 + 29);
+    assert_eq!(mod_toc.index.len(), 11 + 29);
     let mh = mod_toc.find_type(CHUNK_CONTAINER_HEADER).unwrap();
+    // This exact 40-package set exposed the runtime EOF-read regression:
+    // the perfect hash puts the container header in the last slot.
+    assert_eq!(mh, mod_toc.entries() - 1);
+    assert_eq!(built.ucas.len() % lis_ultrawide_core::iostore::BLOCK_SIZE, 0);
+    let last_block = mod_toc.blocks.last().unwrap();
+    let logical_end = last_block.offset as usize + last_block.compressed as usize;
+    assert!(built.ucas[logical_end..].iter().all(|&b| b == 0));
     let (_, mod_entries) = parse_container_header(&mod_toc.read(mh).unwrap(), 2).unwrap();
     check_masks(&mut toc, &mut mod_toc, &entries, &mod_entries, "Chronos/Content/VFX/MajorChoice/Masks/", Summary::Ue52, dw / 3840.0, 29);
     // at 16:9 and narrower nothing is squeezed and no mask is published
     let (dw169, _) = design_space(3840, 2160, ui.design);
     let mut lines = Vec::new();
     let built = build_mod(&paks, ui, dw169, &so, &mut lines).unwrap();
-    assert_eq!((built.applied, built.failed), (10, 0));
+    assert_eq!((built.applied, built.failed), (11, 0));
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The DLC picture fits the central authored band; every other export,
+/// the graph and all pre-existing UI edits remain byte-identical.
+#[test]
+fn de_promotion_changes_only_the_picture_slot() {
+    let Some(paks) = paks() else { return };
+    let ui = DOUBLE_EXPOSURE.ui().unwrap();
+    let so = load_script_objects(&paks.join("global.utoc")).unwrap();
+    let mut stock = Toc::open(&paks.join("pakchunk0-Windows.utoc")).unwrap();
+    let path = "Chronos/Content/UI/BP/Window/BP_DLCWarningWindow.uasset";
+    let original = stock.read(stock.index[path]).unwrap();
+    let pkg = ZenPackage::parse(&original, Summary::Ue52).unwrap();
+    let (slot_index, old_slot, _, old_payload) = slot_payload_in(&pkg, "DLCImage", Some("MainPanel"), &so).unwrap();
+    assert_eq!(old_slot.anchor_min, (0.0, 0.0));
+    assert_eq!(old_slot.anchor_max, (1.0, 1.0));
+    assert_eq!(old_slot.offsets, [0.0; 4]);
+    assert_eq!(old_payload.len(), 40);
+    let dir = std::env::temp_dir().join(format!("lis-de-promo-test-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let base = dir.join(ui.mod_name);
+    for (width, height) in [(1920, 1080), (2560, 1600), (5120, 2160), (3440, 1440), (7680, 2160)] {
+        let (dw, _) = design_space(width, height, ui.design);
+        let built = build_mod_with(&paks, ui, dw, &so, &mut Vec::new(), false).unwrap();
+        assert_eq!((built.applied, built.failed), (11, 0));
+        std::fs::write(base.with_extension("utoc"), &built.utoc).unwrap();
+        std::fs::write(base.with_extension("ucas"), &built.ucas).unwrap();
+        let mut output = Toc::open(&base.with_extension("utoc")).unwrap();
+        let data = output.read(output.index[path]).unwrap();
+        let edited = ZenPackage::parse(&data, Summary::Ue52).unwrap();
+        let (_, slot, _, _) = slot_payload_in(&edited, "DLCImage", Some("MainPanel"), &so).unwrap();
+        let mut expected_slot = old_slot.clone();
+        let inset = ((dw - 3840.0) / 2.0) as f32;
+        expected_slot.offsets = [inset, 0.0, inset, 0.0];
+        assert_eq!(slot, expected_slot);
+        assert!((dw - f64::from(slot.offsets[0] + slot.offsets[2]) - 3840.0).abs() < 0.001);
+        for e in &pkg.exports {
+            if e.index != slot_index {
+                assert_eq!(edited.export_data(&edited.exports[e.index]), pkg.export_data(e), "{} changed", e.name);
+            }
+        }
+        // Replacing the slot with its original bytes recovers the complete
+        // original package, including all export sizes/offsets and trailer.
+        assert_eq!(lis_ultrawide_core::zen::replace_export(&data, Summary::Ue52, slot_index, old_payload).unwrap(), original);
+        // Existing packages still differ from stock in exactly their known floats.
+        for p in PACKAGES {
+            let mut expected = stock.read(stock.index[p.path]).unwrap();
+            for edit in ui.edits.iter().filter(|e| format!("{}{}", ui.ui_prefix, e.package) == p.path) {
+                let s = p.slots.iter().find(|s| s.widget == edit.widget).unwrap();
+                let value = edit.new.apply(dw, ui.design) as f32;
+                expected[s.base + s.float_at..s.base + s.float_at + 4].copy_from_slice(&value.to_le_bytes());
+            }
+            assert_eq!(output.read(output.index[p.path]).unwrap(), expected, "{} changed", p.path);
+        }
+    }
+    // A partial/multiple bundle must fail without attempting a rewrite.
+    let mut unsupported = original.clone();
+    let graph = u32::from_le_bytes(unsupported[40..44].try_into().unwrap()) as usize;
+    unsupported[graph + 12..graph + 16].copy_from_slice(&2u32.to_le_bytes());
+    assert!(lis_ultrawide_core::zen::replace_export(&unsupported, Summary::Ue52, slot_index, old_payload).unwrap_err().contains("one export bundle"));
+    let _ = std::fs::remove_dir_all(dir);
 }
 
 /// Reunion (RESEARCH 13i): TOC version 8, container header version 4, the
@@ -457,7 +525,9 @@ fn builds_the_same_container_as_the_python_writer() {
     };
     let reference = PathBuf::from(reference);
     let game: &dyn Game = &DOUBLE_EXPOSURE;
-    let ui = game.ui().unwrap();
+    // The historical writer predates promotional artwork reslots.
+    let legacy = lis_ultrawide_core::ui_layout::UiFix { reslots: &[], ..*game.ui().unwrap() };
+    let ui = &legacy;
     let so = load_script_objects(&paks.join("global.utoc")).unwrap();
     let (dw, _) = design_space(5120, 2160, ui.design);
     let mut lines = Vec::new();
@@ -468,7 +538,10 @@ fn builds_the_same_container_as_the_python_writer() {
     assert_eq!((built.applied, built.failed), (10, 0));
     let want = |ext: &str| std::fs::read(reference.join(format!("{}.{ext}", ui.mod_name))).unwrap();
     assert!(built.pak == want("pak"), "the stub .pak differs from the Python writer's");
-    assert!(built.ucas == want("ucas"), "the .ucas differs from the Python writer's");
+    let mut legacy_ucas = want("ucas");
+    let alignment = lis_ultrawide_core::iostore::BLOCK_SIZE;
+    legacy_ucas.resize(legacy_ucas.len().div_ceil(alignment) * alignment, 0);
+    assert!(built.ucas == legacy_ucas, "the .ucas differs from the Python writer's, apart from EOF padding");
     assert!(built.utoc == want("utoc"), "the .utoc differs from the Python writer's");
 }
 

@@ -759,6 +759,12 @@ pub fn build_container(mount_point: &str, chunks: &[Chunk], container_id: u64, t
         out.extend(hash::blake3(&chunks[c].data, 20));
         out.extend(vec![0u8; pad + 1]);
     }
+    // The runtime can read beyond the final chunk's logical end in an
+    // aligned I/O request. Keep backing bytes available through the next
+    // block boundary. Without this, a container whose header hashes to
+    // the last slot can fail to mount even though every chunk reads back
+    // through our exact-length reader (RESEARCH.md 12d).
+    ucas.resize(ucas.len().div_ceil(BLOCK_SIZE) * BLOCK_SIZE, 0);
     Ok((out, ucas))
 }
 
@@ -872,6 +878,7 @@ mod tests {
             Chunk { id: container_header_chunk_id(99), data: vec![1, 2, 3], path: None },
         ];
         let (utoc, ucas) = build_container("../../../Chronos/Content/", &chunks, 99, 5).unwrap();
+        assert_eq!(ucas.len() % BLOCK_SIZE, 0);
         let base = dir.join("Test_P");
         std::fs::write(base.with_extension("utoc"), &utoc).unwrap();
         std::fs::write(base.with_extension("ucas"), &ucas).unwrap();
@@ -891,5 +898,23 @@ mod tests {
         }
         assert_eq!(stub_pak().len(), 339);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn backs_the_last_chunk_with_a_complete_aligned_read() {
+        // A one-chunk container necessarily puts its header last. Its
+        // logical length must stay exact, while aligned reads get zeros
+        // instead of running past the physical end of the .ucas file.
+        let data = vec![0xAB; 113];
+        let chunks = [Chunk { id: container_header_chunk_id(99), data: data.clone(), path: None }];
+        for version in [5, 8] {
+            let (utoc, ucas) = build_container("../../../Chronos/Content/", &chunks, 99, version).unwrap();
+            assert_eq!(ucas.len(), BLOCK_SIZE);
+            assert_eq!(&ucas[..data.len()], &data);
+            assert!(ucas[data.len()..].iter().all(|&b| b == 0));
+            let lengths = HEADER_SIZE + 12; // one chunk id, then offset/length
+            assert_eq!(be_uint(&utoc[lengths..lengths + 5]), 0);
+            assert_eq!(be_uint(&utoc[lengths + 5..lengths + 10]), data.len() as u64);
+        }
     }
 }

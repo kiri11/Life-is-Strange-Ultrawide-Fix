@@ -5,6 +5,7 @@ A native ultrawide fix for **Life is Strange: Double Exposure** and **Life is St
 - Cutscenes, dialogues and exploration fill the whole screen with no black bars and no cropping.
 - No camera zoom or snap when a dialogue or cutscene ends.
 - Photos and Max's Polaroids keep their correct proportions.
+- Double Exposure's Ultimate Upgrade artwork keeps its original proportions.
 - Loading screens and HUD elements use the full width of the screen.
 - The coloured highlight of a major choice stays on what it highlights.
 - Optional: disable chromatic aberration and reduce blurriness.

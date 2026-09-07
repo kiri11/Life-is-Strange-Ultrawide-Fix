@@ -436,6 +436,46 @@ A native Oodle library can still be used by the research scripts - which read fa
 
 ---
 
+### 9f. Ultimate Upgrade Artwork (2026-09-06)
+
+The post-chapter-1 cat-content reminder is `BP_DLCWarningWindow`, with
+`DLCImage` in a full-stretch slot of `MainPanel`: anchors `(0,0)-(1,1)`,
+all offsets zero, `bAutoSize = true`. The image is
+`UI/Images/Menu/DLC/T_DLC_PawPrint_Upsell_BG`, the 16:9 artwork of Max
+holding the cat. Widening `WindowParent` stretches this image horizontally.
+
+The fix reslots **only `DLCImage`**, setting Left and Right to
+`(designW - 3840) / 2` and keeping Top and Bottom zero. At 5120x2160 the
+image occupies the central 3840x2160 area. The text, buttons, input bar,
+background overlays and the texture itself are unchanged. The slot's
+anchors, alignment, auto-size flag and object references are preserved.
+
+The cooked slot omits the offsets, so there is no float to overwrite.
+`zen::replace_export` now supports UE 5.2 packages with a single export
+bundle covering every export: it checks the graph's zero serial offset,
+first entry and entry count, and checks each create/serialize command occurs
+once. The payload grows from 40 to 87 bytes; the export's size and the
+subsequent cooked offsets change, while the graph stays identical.
+Multi-bundle UE 5.2 packages are rejected.
+
+The regression test builds and reads the mod at 16:9, 16:10, 5120x2160,
+3440x1440 and 32:9. Every other export in the window is byte-identical;
+replacing the new slot with the old payload recovers the entire original
+package. The ten previously edited UI packages still contain exactly their
+existing float edits. The full Double Exposure container now has 40
+packages (11 UI packages and 29 masks).
+
+The packaged UI asset audit found one image in the DLC promotion folder.
+`BP_MoreGamesWindow` also has a full-stretch `GameBackgroundImage`, but no
+corresponding promotional artwork was identified in the installed UI image
+assets. Its behavior has not been verified, so it is not changed. The
+generic `BP_ImageWindow` is also left alone because it serves other uses.
+
+The first 40-package build exposed the container EOF-padding bug in 12d.
+After padding alone was added, the owner confirmed the loading overlay
+and menus were wide again. The corrected DLC screen itself still needs
+an in-game visual check.
+
 ## 10. Runtime Camera Measurement - The Letterbox Ramp
 
 Sections 2-9 were derived statically. The dialogue-exit zoom resisted that approach through three wrong hypotheses, so it was settled by measurement instead: a read-only UE4SS Lua mod sampling `APlayerCameraManager` every frame and logging `ViewTarget.Target`, `ViewTarget.POV.{FOV, AspectRatio, bConstrainAspectRatio, Location}` and `CameraCachePrivate.POV` (the finished, post-blend view that reaches the renderer). It hooked nothing and wrote nothing back. **Debug only - it is not part of the shipped fix.**
@@ -557,6 +597,29 @@ The fix does not synthesize entries: it copies each package's entry out of `pakc
 The test `reads_the_games_ui_packages_as_the_python_did` in `crates/core/tests/ui.rs` runs both checks against `pakchunk0` - it resolves every chunk through the perfect hash and rebuilds the container header to the last byte - and the reader tests in `iostore.rs` do the same for what the fix writes. The Python original, which is how the numbers above were produced, passed on `pakchunk0`, on `pakchunk1`, on a third-party mod, and on what the fix writes; on 2026-09-02 the Rust writer's three files were compared with the Python writer's for the same inputs and were identical.
 
 ### 12d. What the File Checks Cannot Prove
+
+**EOF padding regression, 2026-09-06.** Adding the DLC screen (9f)
+changed the perfect-hash layout: the container header moved from slot 19
+of 40 chunks to the final slot, 40 of 41. Every one of the 39 existing
+packages was byte-identical, all lookups resolved, and the new file read
+back through the fix's reader, but the owner reported that the loading
+overlay and menus had reverted to 16:9.
+
+The writer aligned each block's start to 16 bytes but ended the physical
+`.ucas` immediately after the last payload. Appending zero bytes from
+3,828,644 to 3,866,624 (the next 64 KiB boundary), with the `.utoc`, `.pak`
+and all logical chunk bytes unchanged, restored the wide UI in-game;
+the owner confirmed the loading overlay and menus worked. This isolates
+the failure to the file ending, consistent with an aligned runtime read
+extending beyond physical EOF when reading the container header.
+
+`build_container` now pads the physical file to a full 64 KiB block.
+Offsets, logical lengths, hashes and directory entries do not include
+that padding. The unit test covers a header-only container, and the
+game-data mask test pins this 40-package set with its header last and
+checks the final padding. The Python-reference comparison allows only
+the added trailing zeros. Round-tripping through an exact-length reader
+alone does not test the runtime's I/O requirements.
 
 Everything above is verified against files, and the finished container is read back through our own reader before the installer reports success. Whether the running game *mounts* `Content/Paks/Mods/` and prefers our packages is the one claim no file check can settle. **Confirmed in game at 5120x2160**: the container mounts and its packages win over `pakchunk0`'s. It stays the thing to check first if the UI ever comes up 16:9 with all three files in place - most likely after a game update, which is what the staleness check in 9c-3 is for.
 
@@ -803,7 +866,7 @@ Reported: the pre-rendered "Previously On" video that opens a new game is stretc
 
 The fix insets the image on both sides to the centred 16:9 band: `Left = Right = (designW - 3840) / 2`, Top and Bottom as they were. The window shows black either side, subtitles stay centred, the hold-to-skip prompt sits at the window's left edge as any full-stretch HUD element does. Verified in the game at 5120x2160 (the 4096x1728 window): the picture occupies the central 3072 px of 4096, correct proportions.
 
-It is not a one-float edit. In the cooked payload Left and Top are absent and Right is zero-masked: unversioned properties leave defaults out, so there is no float to overwrite. `ui_layout::Reslot` re-serialises the whole slot (`unver::encode_slot`, every field written, no zero mask, the four zero trailer bytes of an object without a GUID) and `zen::replace_export` splices the new payload in: the export map's size for that export changes, and the cooked offset of every export stored after it moves by the difference, which is all the header measures. 43 bytes become 86. The UE 5.3+ layout makes this simple because payloads sit at `HeaderSize + CookedSerialOffset`; the 5.2 layout (bundle order, bundle offsets in the graph data) is not implemented, and Double Exposure needs no reslot. The reslot runs after a package's in-place edits, and each reslot re-reads the buffer it is given, so several on one package would compose.
+It is not a one-float edit. In the cooked payload Left and Top are absent and Right is zero-masked: unversioned properties leave defaults out, so there is no float to overwrite. `ui_layout::Reslot` re-serialises the whole slot (`unver::encode_slot`, every field written, no zero mask, the four zero trailer bytes of an object without a GUID) and `zen::replace_export` splices the new payload in: the export map's size for that export changes, and the cooked offset of every export stored after it moves by the difference, which is all the header measures. 43 bytes become 86. The UE 5.3+ layout makes this simple because payloads sit at `HeaderSize + CookedSerialOffset`; the 5.2 layout uses bundle order and bundle offsets in the graph data (single-bundle support was subsequently added for Double Exposure's DLC artwork, section 9f). The reslot runs after a package's in-place edits, and each reslot re-reads the buffer it is given, so several on one package would compose.
 
 The install log line: `D9Image  offsets (0, 0, 0, -1) -> (640, 0, 640, -1) (43 -> 86 bytes)`; the container carries 17 packages. The test `reads_and_rewrites_reunions_ui_packages` checks that every other export of the package, and the bytes after the last one, come back as they were.
 
@@ -825,4 +888,3 @@ The Double Exposure masks are per-scene (`EP1_S2A_MC_Intro_L/R`, `Ep2_S2B_MajorC
 **The codec** (`crates/core/src/bc.rs`): BC1 and BC3 decoded to RGBA and encoded back with a range fit (the block's extreme colours as endpoints, four-colour mode, nearest palette entry; the eight-level alpha mode between the block's extreme alphas), and B8G8R8A8 as is. Unit tests round-trip gradients within the quantisation error and check a known block. The game-data tests (`refits_double_exposures_masks`, and the mask check in `reads_and_rewrites_reunions_ui_packages`) build the container for 5120x2160 and read every mask back: same size, store entry unchanged, every byte outside the mips as it was, every mip equal to re-fitting and re-encoding the stock mip. At 16:9 and narrower the factor is 1 and no mask is published; the camera stays constrained there anyway (2c), so the stock masks line up.
 
 Not yet seen in the game: this needs a save at a major choice. What is verified is the file side above and that both games start with the containers mounted.
-
