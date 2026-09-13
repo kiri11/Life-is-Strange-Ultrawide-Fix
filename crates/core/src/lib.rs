@@ -68,3 +68,6 @@ pub fn hex4(text: &str) -> [u8; 4] {
 pub fn to_hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
+
+pub mod pak;
+pub mod pak_ui;

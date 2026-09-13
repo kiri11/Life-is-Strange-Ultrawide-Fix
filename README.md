@@ -1,6 +1,6 @@
-# Life is Strange: Double Exposure and Reunion - Ultrawide Fix
+# Life is Strange - Ultrawide Fix
 
-A native ultrawide fix for **Life is Strange: Double Exposure** and **Life is Strange: Reunion**. Works with 21:9, 32:9, 32:10, 16:10 and any other resolution - the installer detects yours automatically.
+A native ultrawide fix for **Life is Strange: Double Exposure**, **Life is Strange: Reunion**, and **Life is Strange: True Colors**. Works with 21:9, 32:9, 32:10, 16:10 and any other resolution - the installer detects yours automatically.
 
 - Cutscenes, dialogues and exploration fill the whole screen with no black bars and no cropping.
 - No camera zoom or snap when a dialogue or cutscene ends.
@@ -65,8 +65,8 @@ It asks what to install. Double-clicking `lis-ultrawide-fix` in the file manager
 | `install`, `restore` | Install the fix, or undo everything it installed |
 | `status` | Report whether the camera loader and the UI container are installed and current |
 | `find` | Print where the game was found and exit |
-| `--game double-exposure` or `--game reunion` | Which game, when both are installed (the first found otherwise) |
-| `--exe <path>` | Point at a specific `Chronos-Win64-Shipping.exe` or `Iris-Win64-Shipping.exe` |
+| `--game double-exposure`, `--game reunion`, or `--game true-colors` | Which game, when several are installed (the first found otherwise) |
+| `--exe <path>` | Point at a specific `Chronos-Win64-Shipping.exe`, `Iris-Win64-Shipping.exe`, or `Siren-Win64-Shipping.exe` |
 | `--width`, `--height` | Install for this resolution instead of the detected one |
 | `--yes` | Take the defaults without asking |
 | `--engine-ini <path>` | Path to `Engine.ini` inside a prefix Steam does not manage (Heroic, Lutris, plain Wine) |
@@ -95,8 +95,8 @@ Then pick **Native** in the game's Steam properties; 5120x2160 is not in Steam's
 
 | Option | Effect | Changes |
 | :--- | :--- | :--- |
-| **Ultrawide camera** | Full-width cutscenes, dialogue and exploration | adds `winhttp.dll`, the loader, next to the game executable (`Chronos/Binaries/Win64` or `Iris/Binaries/Win64`) |
-| **Full-width UI** | Loading screens and HUD use the whole screen; the major-choice highlight and the recap video keep their proportions | adds `Content/Paks/Mods/LiSUltrawideUI_P.*` next to the game data (`Chronos/Content/Paks` or `Iris/Content/Paks`) |
+| **Ultrawide camera** | Full-width cutscenes, dialogue and exploration | adds `winhttp.dll`, the loader, next to the game executable (`Chronos/Binaries/Win64`, `Iris/Binaries/Win64`, or `Siren/Binaries/Win64`) |
+| **Full-width UI** | Loading screens and HUD use the whole screen; the major-choice highlight and the recap video keep their proportions | adds `Content/Paks/Mods/LiSUltrawideUI_P.*` next to the game data (`Chronos/Content/Paks`, `Iris/Content/Paks`, or `Siren/Content/Paks`) |
 | **Disable chromatic aberration** | Removes colour fringing at the edges | `Engine.ini` |
 
 The loader writes `LiSUltrawideCamera.log` next to itself at every launch, saying what it did. The `Engine.ini` setting is added as a clearly marked block. Running the installer again never stacks changes. **Restore** also removes what older versions of the fix installed: the anti-blur settings that used to be an option in the same block, and an executable edited in place by a version from before September 2026 is put back to stock from its backup.
@@ -106,12 +106,12 @@ The loader writes `LiSUltrawideCamera.log` next to itself at every launch, sayin
 ## Troubleshooting
 
 - **Windows or your antivirus blocked the installer:** click **More info**, then **Run anyway**. If an antivirus quarantined it, restore the file and exclude the folder.
-- **The installer cannot find the game:** click **Browse** and select `Chronos\Binaries\Win64\Chronos-Win64-Shipping.exe` (Double Exposure) or `Iris\Binaries\Win64\Iris-Win64-Shipping.exe` (Reunion) inside the game folder.
+- **The installer cannot find the game:** click **Browse** and select `Chronos\Binaries\Win64\Chronos-Win64-Shipping.exe` (Double Exposure) or `Iris\Binaries\Win64\Iris-Win64-Shipping.exe` (Reunion), or `Siren\Binaries\Win64\Siren-Win64-Shipping.exe` (True Colors) inside the game folder.
 - **"The system refused permission to write the game files":** the game is installed somewhere only an administrator may write to. The installer offers to run again as administrator - say yes.
 - **The camera fix is not active:** open `LiSUltrawideCamera.log` next to the game executable. It says whether the loader ran, what it found, and why it applied nothing. If it says the game's build is not one the fix knows, a new version of the fix is needed. If there is no log at all, the game did not load the library: on Linux, see the launch-option note above.
 - **The installer says another winhttp.dll is next to the game:** another mod's loader uses the same name. Only one can load, so move it away, or untick the camera part.
 - **A cutscene shows black bars:** report which scene, so its camera can be included.
-- **The UI is still 16:9 in game:** check that `Content/Paks/Mods/LiSUltrawideUI_P.utoc`, `.ucas` and `.pak` are all present under `Chronos` (Double Exposure) or `Iris` (Reunion). If they are, open an issue with your resolution.
+- **The UI is still 16:9 in game:** check that `Content/Paks/Mods/LiSUltrawideUI_P.utoc`, `.ucas` and `.pak` are all present under `Chronos` (Double Exposure) or `Iris` (Reunion). For True Colors, check the single `Siren/Content/Paks/Mods/LiSUltrawideUI_P.pak` instead. If the files are present, open an issue with your resolution.
 - **"Could not locate Engine.ini" on Linux or the Steam Deck:** start the game once, quit, and run the installer again.
 
 ### Still broken?
@@ -127,9 +127,9 @@ The loader writes `LiSUltrawideCamera.log` next to itself at every launch, sayin
 
 ## Technical details
 
-The fix changes a handful of bytes in the game's code, in memory at every launch, to force Unreal Engine's built-in Hor+ projection for every camera, and adds a small mod container with full-width versions of the game's UI packages. The complete reverse-engineering breakdown is in **[RESEARCH.md](RESEARCH.md)** (sections 1 to 12 for Double Exposure, 13 for Reunion). Each game is one descriptor under `crates/core/src/games/`: names, paths, the signatures of its patch sites and the bytes of its caves.
+The fix changes a handful of bytes in the game's code, in memory at every launch, to force Unreal Engine's built-in Hor+ projection for every camera, and adds a small mod container with full-width versions of the game's UI packages. The complete reverse-engineering breakdown is in **[RESEARCH.md](RESEARCH.md)** (sections 1 to 12 for Double Exposure, 13 for Reunion, 14 for True Colors). Each game is one descriptor under `crates/core/src/games/`: names, paths, the signatures of its patch sites and the bytes of its caves.
 
-Everything is Rust, in one workspace. The only crates it pulls in are pure Rust: `blake3`, `sha1` and `sha2` for the three digests the container formats use, and `winresource` at build time for the Windows version resources. Nothing is needed at run time beyond the operating system:
+Everything is Rust, in one workspace. The only crates it pulls in are pure Rust: `blake3`, `sha1` and `sha2` for the three digests the container formats use, `miniz_oxide` for True Colors zlib assets, and `winresource` at build time for the Windows version resources. Nothing is needed at run time beyond the operating system:
 
 `LiSUltrawidePatcher.exe` is a thin Windows window that runs `lis-ultrawide-fix.exe`, which it looks for in a `cli` folder next to itself and then in its own folder; it is compiled from [`LiSUltrawidePatcher.cs`](LiSUltrawidePatcher.cs) with the compiler that ships with Windows. [The release workflow](.github/workflows/build.yml) tests the workspace on Linux and Windows, builds the loader and the installers, and names the commit each release was built from. To build it yourself:
 

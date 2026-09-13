@@ -16,3 +16,4 @@ name = "lis_ultrawide_core"
 blake3 = { version = "1", features = ["pure"] }
 sha1 = "0.10"
 sha2 = "0.10"
+miniz_oxide = "0.8"

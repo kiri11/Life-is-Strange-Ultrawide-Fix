@@ -242,3 +242,124 @@ fn matches_the_documented_reunion_sites_on_the_real_executable() {
     }
     assert!(plan.notes.iter().all(|n| !n.contains("moved")), "{:?}", plan.notes);
 }
+
+// ---- True Colors -----------------------------------------------------------
+
+use lis_ultrawide_core::games::true_colors::plan_true_colors;
+
+fn synthetic_true_colors() -> Vec<u8> {
+    let mut d = vec![0x90u8; 0x4000];
+    let put = |d: &mut Vec<u8>, at: usize, bytes: Vec<u8>| d[at..at + bytes.len()].copy_from_slice(&bytes);
+    put(&mut d, AXIS, hex("3BC17E05 80FA02 742C 80FA01 7426 0FB65334 80FA01"));
+    put(&mut d, GATE, hex("0FB68304020000 334730 83E001 314730"));
+    d[CAVES - 1] = 0xC3;
+    d[CAVES..CAVES + 0x100].fill(0xCC);
+    d
+}
+
+#[test]
+fn plans_true_colors_patch_and_branch_target_over_a_synthetic_image() {
+    let d = synthetic_true_colors();
+    let plan = plan_true_colors(&image(&d), hex4("A3011840")).unwrap();
+    let got = writes(&plan);
+    let axis = BASE + AXIS as u64;
+    let gate = BASE + GATE as u64;
+    assert_eq!(got.get(&(axis + 6)), Some(&vec![0xFF]));
+    assert_eq!(got.get(&(axis + 11)), Some(&vec![0xFF]));
+    let caves: Vec<_> = got.iter().filter(|&(&va, _)| va != axis + 6 && va != axis + 11 && va != gate).collect();
+    assert_eq!(caves.len(), 4);
+    let expected_sizes = [19, 17, 17, 11];
+    for ((_, bytes), size) in caves.iter().zip(expected_sizes) {
+        assert_eq!(bytes.len(), size);
+        assert!(bytes.iter().all(|&b| b != 0xCC));
+    }
+    let addresses: Vec<u64> = caves.iter().map(|&(&va, _)| va).collect();
+    let target = |bytes: &[u8], at: u64, offset: usize, width: usize| -> u64 {
+        let disp = i32::from_le_bytes(bytes[offset + width - 4..offset + width].try_into().unwrap());
+        ((at as i64) + offset as i64 + width as i64 + i64::from(disp)) as u64
+    };
+    let (a, b, c, d_cave) = (addresses[0], addresses[1], addresses[2], addresses[3]);
+    assert_eq!(target(caves[0].1, a, 13, 5), b);
+    assert_eq!(target(caves[1].1, b, 6, 6), a + 18);
+    assert_eq!(target(caves[1].1, b, 12, 5), c);
+    assert_eq!(target(caves[2].1, c, 6, 6), a + 18);
+    assert_eq!(target(caves[2].1, c, 12, 5), d_cave);
+    assert_eq!(caves[3].1, &hex("83E0FE C7472C398EE33F C3"));
+    let call = got.get(&gate).unwrap();
+    assert_eq!(call.len(), 7);
+    assert_eq!(target(call, gate, 0, 5), a);
+    assert_eq!(&call[5..], &[0x66, 0x90]);
+    assert_eq!(plan.writes.len(), 7);
+    for w in &plan.writes {
+        assert_eq!(image(&d).read(w.va, w.expected.len()).unwrap(), &w.expected[..], "{}", w.what);
+    }
+    assert!(plan.notes.iter().any(|n| n.contains("camera helper")), "{:?}", plan.notes);
+}
+
+#[test]
+fn true_colors_planner_fails_closed_for_bad_or_repeated_sites() {
+    let d = synthetic_true_colors();
+    let mut patched = d.clone();
+    let plan = plan_true_colors(&image(&patched), hex4("A3011840")).unwrap();
+    for w in &plan.writes {
+        let at = (w.va - BASE) as usize;
+        patched[at..at + w.bytes.len()].copy_from_slice(&w.bytes);
+    }
+    let err = plan_true_colors(&image(&patched), hex4("A3011840")).unwrap_err();
+    assert!(err.contains("already patched"), "{err}");
+
+    let mut ambiguous = d.clone();
+    let copy = ambiguous[AXIS..AXIS + 28].to_vec();
+    ambiguous[0x100..0x100 + 28].copy_from_slice(&copy);
+    let err = plan_true_colors(&image(&ambiguous), hex4("A3011840")).unwrap_err();
+    assert!(err.contains("2 times"), "{err}");
+
+    let mut unknown = d;
+    unknown[GATE] = 0;
+    let err = plan_true_colors(&image(&unknown), hex4("A3011840")).unwrap_err();
+    assert!(err.contains("not one the fix knows"), "{err}");
+}
+
+#[test]
+fn matches_true_colors_sites_and_cave_on_the_real_executable() {
+    let path = std::env::var("LIS_TRUE_COLORS_STOCK_EXE").unwrap_or_else(|_| {
+        r"D:\Games\Life is Strange True Colors\Siren\Binaries\Win64\Siren-Win64-Shipping.exe".into()
+    });
+    let Ok(data) = std::fs::read(&path) else {
+        eprintln!("skipped: no True Colors executable at {path} (set LIS_TRUE_COLORS_STOCK_EXE)");
+        return;
+    };
+    let (headers, img) = pe::file_image(&data).unwrap();
+    let started = std::time::Instant::now();
+    let plan = plan_true_colors(&img, lis_ultrawide_core::camera::gate_upper(5120, 2160)).unwrap();
+    eprintln!("planned in {:?}: {:?}", started.elapsed(), plan.notes);
+    let mut got = writes(&plan);
+    assert_eq!(got.remove(&(0x23EFC3Fu64 + 6)), Some(vec![0xFF]));
+    assert_eq!(got.remove(&(0x23EFC3Fu64 + 11)), Some(vec![0xFF]));
+    let cave_writes = &plan.writes[2..6];
+    assert_eq!(cave_writes.iter().map(|w| w.bytes.len()).collect::<Vec<_>>(), vec![19, 17, 17, 11]);
+    let caves: Vec<u64> = cave_writes.iter().map(|w| w.va).collect();
+    let target = |bytes: &[u8], at: u64, offset: usize, width: usize| -> u64 {
+        let disp = i32::from_le_bytes(bytes[offset + width - 4..offset + width].try_into().unwrap());
+        ((at as i64) + offset as i64 + width as i64 + i64::from(disp)) as u64
+    };
+    assert_eq!(target(&cave_writes[0].bytes, caves[0], 13, 5), caves[1]);
+    assert_eq!(target(&cave_writes[1].bytes, caves[1], 6, 6), caves[0] + 18);
+    assert_eq!(target(&cave_writes[1].bytes, caves[1], 12, 5), caves[2]);
+    assert_eq!(target(&cave_writes[2].bytes, caves[2], 6, 6), caves[0] + 18);
+    assert_eq!(target(&cave_writes[2].bytes, caves[2], 12, 5), caves[3]);
+    assert_eq!(&cave_writes[3].bytes[..7], &[0x83, 0xE0, 0xFE, 0xC7, 0x47, 0x2C, 0x39]);
+    assert_eq!(cave_writes[3].bytes[7..], hex("8EE33F C3"));
+    for cave in &caves { got.remove(cave); }
+    let site = got.remove(&0x23FB3FC).expect("gate site");
+    assert_eq!(&site[0..1], &[0xE8]);
+    assert_eq!(&site[5..], &[0x66, 0x90]);
+    let target = 0x23FB3FCi64 + 5 + i64::from(i32::from_le_bytes(site[1..5].try_into().unwrap()));
+    assert_eq!(target as u64, caves[0]);
+    assert!(got.is_empty(), "unexpected writes: {got:?}");
+    for w in &plan.writes {
+        assert_eq!(img.read(w.va, w.expected.len()).unwrap(), &w.expected[..], "{}", w.what);
+    }
+    assert!(plan.notes.iter().all(|n| !n.contains("moved")), "{:?}", plan.notes);
+    let _ = headers;
+}

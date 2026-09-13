@@ -67,7 +67,7 @@ using System.Windows.Forms;
 // together with the installer's, so one number identifies the whole fix.
 [assembly: AssemblyTitle("Life is Strange - Ultrawide Fix")]
 [assembly: AssemblyDescription("Installs the ultrawide and cutscene fix for "
-                               + "Life is Strange: Double Exposure and Reunion.")]
+                               + "Life is Strange: Double Exposure, Reunion and True Colors.")]
 [assembly: AssemblyProduct("LiS Ultrawide Fix")]
 [assembly: AssemblyCopyright("Copyright (C) 2026 Kiri11. "
                              + "GPL-3.0-or-later; see LICENSE.")]

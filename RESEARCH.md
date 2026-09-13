@@ -826,3 +826,33 @@ The Double Exposure masks are per-scene (`EP1_S2A_MC_Intro_L/R`, `Ep2_S2B_MajorC
 
 Not yet seen in the game: this needs a save at a major choice. What is verified is the file side above and that both games start with the containers mounted.
 
+
+## 14. True Colors (2026-09-13)
+
+True Colors uses the Siren project, UE 4.25, Steam app 936790, and `WindowsNoEditor` for user configuration. The inspected installation is `D:\Games\Life is Strange True Colors`; its cooked configuration names build `1.1.192.628695`. The executable timestamp is `0x6158aa45`, image size `0x4f67000`. Its normal import table includes `WINHTTP.dll`, so the existing proxy and forwarders work unchanged.
+
+### 14a. Camera
+
+The projection function has `cmp eax,ecx; jle; cmp dl,2; je; cmp dl,1; je` at RVA `0x23efc3f`. Enum immediates at +6 and +11 become `0xff`. The following projection-mode comparison against 1 stays intact for orthographic cameras.
+
+`UCameraComponent::GetCameraView` copies component aspect `rbx+0x200` to view aspect `rdi+0x2c`, then copies the constrain bit from `rbx+0x204` into `rdi+0x30`. At RVA `0x23fb3fc`, the seven-byte `movzx eax,byte [rbx+0x204]` becomes a call and a two-byte nop. The helper reads original flags into eax and aspect bits into ecx. Only aspects strictly above 1.75 and below the existing display-derived upper bound clear bit 0 and pin the view aspect to `1.7777778f`. Other flags and authored views outside the gate are preserved. The original xor/and/xor flag merge then executes. No cine-camera constraint is reasserted.
+
+This executable has no int3 run longer than 21 bytes. The helper occupies four disjoint verified runs of 19, 17, 17, and 11 bytes in the same executable section. Relative jumps connect flag/aspect load, lower-bound test, upper-bound test, and unconstrain/aspect write. Both rejected comparisons jump to the return at the end of the first block. Only the hook adds a return address; internal jumps preserve stack and flags. In this build the runs are RVAs `0x2d5a14c`, `0x2d5a31e`, `0x2d5a47e`, and `0x2c824`. Existing all-or-nothing write checks and page protection handling apply.
+
+### 14b. UI
+
+The source is `pakchunk0-WindowsNoEditor.pak`, an unencrypted version-9 pak with a regular (not frozen) index, `../../../` mount, 16,025 entries, and Zlib compression. `pak.rs` validates footer, index digest and bounds, reads selected assets, and validates compressed SHA-1 and decoded lengths. It writes a small uncompressed version-9 patch pak under `Mods/LiSUltrawideUI_P.pak`. Original archives are only read. The new dependency is pure-Rust `miniz_oxide`; neither Unreal nor a game compression DLL is required.
+
+The local audit decoded 2,382 UI packages without parser failures. Unlike the UE5 games, `UI/BP/Managers/UIWindowManager_BP` already stretches `WindowParent` across its parent. The constraint is above that: `WidgetTree.RootWidget -> ScaleBox_0 -> SizeBox -> WindowManager`. `SizeBox` overrides width and height to 1920x1080. Both generated widget tree and cooked archetype serialize the properties. Width floats are at `.uexp` offsets 15247 and 15439, height at 15276 and 15468. The design space derives from the authored size and display: width grows on wide displays, height on taller displays.
+
+Loading and transition windows already stretch across this root. Loading's blackout background has oversized negative margins; its artwork is in a ScaleBox. Transition's `FullscreenImage` has zero-margin stretch anchors. Neither needs a separate edit. Most remaining UI uses relative anchors, centred boxes, or intentionally fixed artwork.
+
+Additional edits, in both tree copies:
+
+| Package | Property | Change |
+|---|---|---|
+| `ChoicesWindow_BP` | `MainPanel/D9Image_102` slot Right | 1920 -> design width |
+| `MainMenuWindow_BP` | `MainPanel/Logo` and `ScaleParent` slot Left | 442 + half the extra width |
+| `TitleWindow_BP` | `MainPanel/Logo` slot Left | 186 + half the extra width |
+
+Four packages are published, each with unchanged `.uasset` and edited `.uexp`. The descriptor pins SHA-256 hashes of both complete source files before using audited property offsets and checks each old float. A changed build fails before publication, preserving any existing mod. This deliberately differs from the semantic UE5 slot parser: these offsets apply only to exactly the inspected packages. The JSON sidecar records SHA-256 of the source pak index, the entire generated mod, and display dimensions. Status reports changed source or missing/modified output as stale. Restore removes only the named mod and sidecar, even without the source archive. Existing UE5 records and legacy restore paths are unchanged.
