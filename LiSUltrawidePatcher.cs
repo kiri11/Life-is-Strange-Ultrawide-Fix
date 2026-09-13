@@ -181,7 +181,7 @@ namespace LiSUltrawidePatcher
         private void InitializeComponent()
         {
             Text = "Life is Strange" + TitleSuffix;     // the game's own title once one is selected
-            AutoScaleMode = AutoScaleMode.Font;
+            AutoScaleMode = AutoScaleMode.Dpi;      // baseline is set at the end, see there
             StartPosition = FormStartPosition.CenterScreen;
             Font = new Font("Segoe UI", 9F);
             ClientSize = new Size(600, 760);        // the log gets what the controls leave
@@ -222,6 +222,7 @@ namespace LiSUltrawidePatcher
             btnBrowse = new Button();
             btnBrowse.Text = "Browse...";
             btnBrowse.AutoSize = true;
+            btnBrowse.AutoSizeMode = AutoSizeMode.GrowAndShrink;   // else DPI scaling doubles its height
             btnBrowse.Margin = new Padding(6, 0, 0, 0);
             btnBrowse.Click += OnBrowse;
             exeRow.Controls.Add(txtExePath, 0, 0);
@@ -366,6 +367,13 @@ namespace LiSUltrawidePatcher
                 root.RowStyles.Add(new RowStyle(SizeType.AutoSize));
             root.RowCount = root.Controls.Count;
             root.RowStyles[root.RowCount - 1] = new RowStyle(SizeType.Percent, 100F);
+
+            // Scale every pixel constant above (wrap widths, box widths, button
+            // heights, window size) by the DPI factor. This must come last:
+            // setting the baseline before the controls exist scales an empty
+            // form and resets the baseline to the current DPI, so nothing
+            // scales afterwards. Fonts follow the DPI on their own.
+            AutoScaleDimensions = new SizeF(96F, 96F);
         }
 
         // ------------------------------------------------------------- helpers
