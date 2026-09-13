@@ -1,7 +1,15 @@
-//! The managed block in the user's `Engine.ini`: chromatic aberration off,
-//! and the optional anti-blur TSR settings. Written between two marker
-//! lines that are part of the on-disk contract with existing installs, and
-//! removed again on restore without touching anything the user wrote.
+//! The managed block in the user's `Engine.ini`: chromatic aberration off.
+//! Written between two marker lines that are part of the on-disk contract
+//! with existing installs, and removed again on restore without touching
+//! anything the user wrote.
+//!
+//! Versions before September 2026 could also put anti-blur TSR settings
+//! (`r.ScreenPercentage`, `r.TSR.History.ScreenPercentage`, sharpening, a
+//! mip bias) into the same block. They were dropped: the screen-percentage
+//! line outranked the game's own resolution scale, the anti-aliasing
+//! quality line named a variable these engines no longer have, and the
+//! rest were taste settings. A restore strips the block by its markers, so
+//! those lines go with it.
 
 use std::path::{Path, PathBuf};
 
@@ -9,63 +17,17 @@ use crate::games::Game;
 use crate::report::{InstallError, Report, Result, replace_file, write_failure};
 use crate::steam;
 
-pub enum Line {
-    Comment(String),
-    Setting(&'static str, String),
-}
-
-/// Recommended TSR values for this resolution.
-///
-/// TSR - UE5's temporal upscaler - is what makes this game look soft. The two
-/// settings that matter most are rendering at 100% of the output resolution
-/// rather than upscaling from a lower one, and giving TSR a history buffer
-/// above output resolution to resolve detail from. The history multiplier is
-/// the expensive one, so it is scaled back at very high pixel counts.
-///
-/// These are a sane starting point, not gospel - every line is a normal UE
-/// console variable and can be edited in Engine.ini afterwards.
-pub fn tsr_settings(width: u32, height: u32) -> Vec<Line> {
-    let megapixels = (width as f64 * height as f64) / 1e6;
-    let (history, sharpen) = if megapixels < 8.0 {
-        (200, "0.5") // up to ~3840x1600 / 3440x1440
-    } else {
-        (150, "0.7") // 5120x2160, 7680x2160, ...
-    };
-    vec![
-        Line::Comment("Render at 100% of the output resolution instead of upscaling from lower".into()),
-        Line::Setting("r.ScreenPercentage", "100".into()),
-        Line::Comment("Highest temporal-upsampler quality".into()),
-        Line::Setting("r.PostProcessAAQuality", "6".into()),
-        Line::Comment("TSR history buffer above output resolution - the main anti-blur knob".into()),
-        Line::Comment(format!("200 = sharpest, 100 = cheapest; {megapixels:.1} MP here")),
-        Line::Setting("r.TSR.History.ScreenPercentage", history.to_string()),
-        Line::Comment("Mild output sharpening to counter the temporal filter".into()),
-        Line::Setting("r.Tonemapper.Sharpen", sharpen.into()),
-        Line::Comment("Slightly sharper texture mips".into()),
-        Line::Setting("r.MipMapLODBias", "-0.5".into()),
-    ]
-}
-
-pub fn build_ini_block(game: &dyn Game, width: u32, height: u32, chromatic: bool, sharpness: bool) -> String {
+pub fn build_ini_block(game: &dyn Game) -> String {
     let (begin, end) = game.ini_markers();
-    let mut lines = vec![begin.to_string(), "[SystemSettings]".to_string()];
-    if chromatic {
-        lines.push("; Chromatic aberration is far more obvious at the widened screen edges".into());
-        lines.push("r.SceneColorFringeQuality=0".into());
-    }
-    if sharpness {
-        if chromatic {
-            lines.push(String::new());
-        }
-        for line in tsr_settings(width, height) {
-            lines.push(match line {
-                Line::Comment(c) => format!("; {c}"),
-                Line::Setting(k, v) => format!("{k}={v}"),
-            });
-        }
-    }
-    lines.push(end.to_string());
-    lines.join("\n") + "\n"
+    [
+        begin,
+        "[SystemSettings]",
+        "; Chromatic aberration is far more obvious at the widened screen edges",
+        "r.SceneColorFringeQuality=0",
+        end,
+    ]
+    .join("\n")
+        + "\n"
 }
 
 /// Remove a previously written managed block, so re-runs never stack.
@@ -153,20 +115,15 @@ pub fn engine_ini_path(game: &dyn Game, exe: Option<&Path>, override_: Option<&P
 }
 
 /// Write the managed block (or remove it). -> whether Engine.ini was found.
-#[allow(clippy::too_many_arguments)]
 pub fn apply_engine_ini(
     game: &dyn Game,
     exe: Option<&Path>,
-    width: u32,
-    height: u32,
-    chromatic: bool,
-    sharpness: bool,
     remove: bool,
     override_: Option<&Path>,
     r: &mut dyn Report,
 ) -> Result<bool> {
     let Some(path) = engine_ini_path(game, exe, override_) else {
-        r.line("  !! could not locate Engine.ini - skipping the display tweaks");
+        r.line("  !! could not locate Engine.ini - skipping the chromatic aberration setting");
         if !cfg!(windows) {
             r.line(
                 "     It lives in the game's Proton prefix, which Steam creates the first time the game is started. \
@@ -190,7 +147,7 @@ pub fn apply_engine_ini(
         if !new.trim().is_empty() {
             new.push('\n');
         }
-        new.push_str(&build_ini_block(game, width, height, chromatic, sharpness));
+        new.push_str(&build_ini_block(game));
     }
     if new == old {
         r.line(&format!("  already up to date: {}", path.display()));
@@ -217,14 +174,11 @@ mod tests {
         let game: &dyn Game = &DOUBLE_EXPOSURE;
         let mut r = Vec::new();
         let user = "[SystemSettings]\nr.Foo=1\n";
-        let block = build_ini_block(game, 5120, 2160, true, true);
+        let block = build_ini_block(game);
         assert!(block.starts_with("; ===== BEGIN LiS:DE Ultrawide Fix"));
-        assert!(block.contains("r.SceneColorFringeQuality=0\n\n; Render at 100%"));
-        assert!(block.contains("r.TSR.History.ScreenPercentage=150\n"));
-        assert!(block.contains("; 200 = sharpest, 100 = cheapest; 11.1 MP here\n"));
-        assert!(block.contains("r.Tonemapper.Sharpen=0.7\n"));
-        assert!(build_ini_block(game, 3440, 1440, false, true).contains("r.TSR.History.ScreenPercentage=200\n"));
-        assert!(build_ini_block(game, 3440, 1440, false, true).contains("r.Tonemapper.Sharpen=0.5\n"));
+        assert!(block.contains("[SystemSettings]\n; Chromatic"));
+        assert!(block.contains("r.SceneColorFringeQuality=0\n; ===== END"));
+        assert!(!block.contains("r.TSR"), "the anti-blur settings are gone");
         let written = format!("{user}\n{block}");
         assert_eq!(strip_ini_block(&written, game.ini_markers(), &mut r), user);
         // stacked twice by hand: both go
@@ -234,8 +188,24 @@ mod tests {
         let broken = format!("{user}\n{}\nr.Bar=2\n", game.ini_markers().0);
         assert_eq!(strip_ini_block(&broken, game.ini_markers(), &mut r), broken);
         assert!(r.iter().any(|l| l.contains("unfinished")));
-        // CRLF files are recognised too
-        let crlf = written.replace('\n', "\r\n");
-        assert_eq!(strip_ini_block(&crlf, game.ini_markers(), &mut r), user.replace('\n', "\r\n"));
+    }
+
+    #[test]
+    fn a_block_from_an_older_installer_is_removed_whole() {
+        // what versions up to September 2026 wrote with the anti-blur option on
+        let game: &dyn Game = &DOUBLE_EXPOSURE;
+        let (begin, end) = game.ini_markers();
+        let user = "[UserSettings]\nKeepMe=1\n";
+        let old = format!(
+            "{user}\n{begin}\n[SystemSettings]\n; Chromatic aberration is far more obvious at the widened screen edges\n\
+             r.SceneColorFringeQuality=0\n\n; Render at 100% of the output resolution instead of upscaling from lower\n\
+             r.ScreenPercentage=100\n; Highest temporal-upsampler quality\nr.PostProcessAAQuality=6\n\
+             ; TSR history buffer above output resolution - the main anti-blur knob\n; 200 = sharpest, 100 = cheapest; 11.1 MP here\n\
+             r.TSR.History.ScreenPercentage=150\n; Mild output sharpening to counter the temporal filter\nr.Tonemapper.Sharpen=0.7\n\
+             ; Slightly sharper texture mips\nr.MipMapLODBias=-0.5\n{end}\n"
+        );
+        let mut r = Vec::new();
+        assert_eq!(strip_ini_block(&old, game.ini_markers(), &mut r), user);
+        assert!(r.is_empty());
     }
 }

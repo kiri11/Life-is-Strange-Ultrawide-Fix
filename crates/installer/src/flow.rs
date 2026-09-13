@@ -138,10 +138,10 @@ fn locate_game(args: &Args, ui: &mut dyn Ui, out: &mut dyn Report) -> R<(&'stati
             let (game, found) = &candidates[pick];
             out.line(&format!("Found game via {}", found.source));
             // two copies of one game share the Engine.ini under the user's
-            // profile: the display tweaks cannot be installed for one alone
+            // profile: the chromatic aberration setting cannot be installed for one alone
             if candidates.iter().filter(|(g, _)| g.id() == game.id()).count() > 1 {
                 out.line(&format!(
-                    "Note: the copies of {} share one Engine.ini, so the display tweaks are installed and restored for all of them at once.",
+                    "Note: the copies of {} share one Engine.ini, so the chromatic aberration setting is installed and restored for all of them at once.",
                     game.title()
                 ));
             }
@@ -189,7 +189,6 @@ struct Parts {
     camera: bool,
     ui: bool,
     chromatic: bool,
-    sharpen: bool,
 }
 
 /// Recognize our files even when an installation is incomplete or outdated.
@@ -278,13 +277,12 @@ fn run_inner(args: &Args, ui: &mut dyn Ui, out: &mut Out) -> R<i32> {
     // then gets told, instead of reading the display itself at launch
     let explicit = (detected != Some((width, height))).then_some((width, height));
 
-    let mut parts = Parts { camera: !args.no_camera, ui: !args.no_ui, chromatic: !args.no_chromatic, sharpen: args.sharpen };
+    let mut parts = Parts { camera: !args.no_camera, ui: !args.no_ui, chromatic: !args.no_chromatic };
     if restore {
         if args.command != Command::Restore {
             // The menu removes the whole fix, regardless of install-only flags.
-            parts = Parts { camera: true, ui: true, chromatic: true, sharpen: true };
+            parts = Parts { camera: true, ui: true, chromatic: true };
         }
-        parts.sharpen = true;
         return run_install(game, &exe, width, height, &parts, true, args.engine_ini.as_deref(), explicit, out);
     }
 
@@ -309,11 +307,8 @@ fn run_inner(args: &Args, ui: &mut dyn Ui, out: &mut Out) -> R<i32> {
                 parts.chromatic,
             )
             .ok_or(Fail::Cancelled)?;
-        parts.sharpen = ui
-            .ask_yes("\n  Reduce blurriness - recommended TSR settings for this resolution.\n  Writes Engine.ini.", parts.sharpen)
-            .ok_or(Fail::Cancelled)?;
     }
-    if !(parts.camera || parts.ui || parts.chromatic || parts.sharpen) {
+    if !(parts.camera || parts.ui || parts.chromatic) {
         out.line("");
         out.line("Nothing selected - exiting.");
         return Ok(0);
@@ -357,8 +352,10 @@ fn run_install(
             let r = ui_layout::restore_ui(paks, fix, &mut Indent(out));
             step(out, r);
         }
-        if parts.chromatic || parts.sharpen {
-            let r = engine_ini::apply_engine_ini(game, Some(exe), width, height, false, false, true, engine_ini, out);
+        if parts.chromatic {
+            // strips the whole managed block by its markers, so the anti-blur
+            // settings older versions offered go with it
+            let r = engine_ini::apply_engine_ini(game, Some(exe), true, engine_ini, out);
             step(out, r.map(|_| ()));
         }
         if let Some(e) = failed {
@@ -396,9 +393,9 @@ fn run_install(
     }
 
     out.line("");
-    out.line("[3/3] Display tweaks (Engine.ini)");
-    if parts.chromatic || parts.sharpen {
-        let r = engine_ini::apply_engine_ini(game, Some(exe), width, height, parts.chromatic, parts.sharpen, false, engine_ini, out);
+    out.line("[3/3] Chromatic aberration off (Engine.ini)");
+    if parts.chromatic {
+        let r = engine_ini::apply_engine_ini(game, Some(exe), false, engine_ini, out);
         step(out, r.map(|_| ()));
     } else {
         out.line("  skipped");
@@ -460,7 +457,7 @@ mod tests {
         std::fs::write(&camera.dll, b"some other mod").unwrap();
         assert!(!has_fix(game, &exe, Some(&ini)), "foreign DLL is not our fix");
         let user = "[UserSettings]\nKeepMe=1\n";
-        let installed = format!("{user}\n{}", engine_ini::build_ini_block(game, 3440, 1440, true, false));
+        let installed = format!("{user}\n{}", engine_ini::build_ini_block(game));
         std::fs::write(&ini, &installed).unwrap();
         assert!(has_fix(game, &exe, Some(&ini)), "settings-only installation");
         let mut out = Out { lines: Vec::new() };
@@ -474,7 +471,7 @@ mod tests {
         answers = Answers { action: Some(0), choices: 0, questions: 0 };
         assert!(matches!(run_inner(&args, &mut answers, &mut out), Ok(0)));
         assert_eq!(answers.choices, 1);
-        assert_eq!(answers.questions, 4);
+        assert_eq!(answers.questions, 3);
         assert_eq!(std::fs::read_to_string(&ini).unwrap().matches(game.ini_markers().0).count(), 1);
 
         // --yes remains unattended, even when a fix is already installed.

@@ -7,7 +7,7 @@ A native ultrawide fix for **Life is Strange: Double Exposure** and **Life is St
 - Photos and Max's Polaroids keep their correct proportions.
 - Loading screens and HUD elements use the full width of the screen.
 - The coloured highlight of a major choice stays on what it highlights.
-- Optional: disable chromatic aberration and reduce blurriness.
+- Optional: disable chromatic aberration.
 
 The game's own files are never modified: the camera fix is a small library the game loads at start, and the UI fix is a mod container next to the game data. Nothing runs in the background, nothing is downloaded, nothing is installed system-wide, and there is no performance impact. Everything can be undone with a single **Restore** button.
 
@@ -71,7 +71,6 @@ It asks what to install. Double-clicking `lis-ultrawide-fix` in the file manager
 | `--yes` | Take the defaults without asking |
 | `--engine-ini <path>` | Path to `Engine.ini` inside a prefix Steam does not manage (Heroic, Lutris, plain Wine) |
 | `--no-camera`, `--no-ui`, `--no-chromatic-fix` | Skip individual parts of the fix |
-| `--sharpen` | Also apply the anti-blur settings |
 
 With Steam, `Engine.ini` lives at `steamapps/compatdata/1874000/pfx/drive_c/users/steamuser/AppData/Local/Chronos/Saved/Config/Windows/Engine.ini` (Double Exposure) or `steamapps/compatdata/2624870/pfx/drive_c/users/steamuser/AppData/Local/Iris/Saved/Config/Windows/Engine.ini` (Reunion) and is found automatically.
 
@@ -99,9 +98,8 @@ Then pick **Native** in the game's Steam properties; 5120x2160 is not in Steam's
 | **Ultrawide camera** | Full-width cutscenes, dialogue and exploration | adds `winhttp.dll`, the loader, next to the game executable (`Chronos/Binaries/Win64` or `Iris/Binaries/Win64`) |
 | **Full-width UI** | Loading screens and HUD use the whole screen; the major-choice highlight and the recap video keep their proportions | adds `Content/Paks/Mods/LiSUltrawideUI_P.*` next to the game data (`Chronos/Content/Paks` or `Iris/Content/Paks`) |
 | **Disable chromatic aberration** | Removes colour fringing at the edges | `Engine.ini` |
-| **Reduce blurriness** | Recommended TSR settings for your resolution (off by default) | `Engine.ini` |
 
-The loader writes `LiSUltrawideCamera.log` next to itself at every launch, saying what it did. The `Engine.ini` settings are added as a clearly marked block. Running the installer again never stacks changes, and an executable that a version of the fix from before September 2026 edited is put back to stock from its backup.
+The loader writes `LiSUltrawideCamera.log` next to itself at every launch, saying what it did. The `Engine.ini` setting is added as a clearly marked block. Running the installer again never stacks changes. **Restore** also removes what older versions of the fix installed: the anti-blur settings that used to be an option in the same block, and an executable edited in place by a version from before September 2026 is put back to stock from its backup.
 
 ---
 
