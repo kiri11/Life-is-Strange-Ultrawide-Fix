@@ -130,10 +130,10 @@ fn finds_the_game_and_its_prefix_in_a_fake_steam_layout() {
 
     // the managed block goes in and comes out again, creating the folders
     let mut r: Vec<String> = Vec::new();
-    apply_engine_ini(game, Some(&exe), 5120, 2160, true, true, false, None, &mut r).unwrap();
+    apply_engine_ini(game, Some(&exe), false, None, &mut r).unwrap();
     assert!(want.is_file(), "Engine.ini was not written into the prefix");
     assert!(std::fs::read_to_string(&want).unwrap().contains(game.ini_markers().0.trim()), "the managed block is missing");
-    apply_engine_ini(game, Some(&exe), 5120, 2160, false, false, true, None, &mut r).unwrap();
+    apply_engine_ini(game, Some(&exe), true, None, &mut r).unwrap();
     assert_eq!(std::fs::read_to_string(&want).unwrap(), "", "the managed block was not removed");
 
     // a permission error reads the same on every platform

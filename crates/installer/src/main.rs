@@ -8,14 +8,12 @@
 
 //! `lis-ultrawide-fix`: the installer, for Windows and Linux.
 //!
-//! Four independent parts; the first three are on by default, the fourth
-//! is opt-in (`--sharpen`):
+//! Three independent parts, all on by default:
 //!
 //! 1. Ultrawide camera: installs the loader library next to the executable
 //!    (embedded in this binary; see crates/loader and RESEARCH.md)
 //! 2. Full-width UI: builds a mod container next to the game data
-//! 3. Chromatic aberration off, and
-//! 4. Anti-blur TSR settings: one managed block in the user's Engine.ini
+//! 3. Chromatic aberration off: one managed block in the user's Engine.ini
 //!
 //! `install`, `restore`, `status` and `find` are the subcommands; with none,
 //! at a terminal, it asks. Without a terminal it asks through a dialog tool
@@ -72,7 +70,6 @@ pub struct Args {
     pub no_camera: bool,
     pub no_ui: bool,
     pub no_chromatic: bool,
-    pub sharpen: bool,
     pub engine_ini: Option<PathBuf>,
     pub help: bool,
     pub version: bool,
@@ -99,9 +96,8 @@ Options:
   --no-camera         skip the ultrawide camera (the loader next to the executable)
   --no-ui             skip the full-width UI (the mod container next to the game data)
   --no-chromatic-fix  skip disabling chromatic aberration
-  --sharpen           also write the recommended anti-blur TSR settings
-  --engine-ini PATH   write the display tweaks to this Engine.ini instead of the
-                      one found automatically (a prefix Steam does not manage)
+  --engine-ini PATH   write the Engine.ini setting to this file instead of the one
+                      found automatically (a prefix Steam does not manage)
   --version           print the version and exit
   --help              this text
 
@@ -121,7 +117,6 @@ pub fn parse_args(argv: &[String]) -> Result<Args, String> {
         no_camera: false,
         no_ui: false,
         no_chromatic: false,
-        sharpen: false,
         engine_ini: None,
         help: false,
         version: false,
@@ -163,7 +158,6 @@ pub fn parse_args(argv: &[String]) -> Result<Args, String> {
             "--no-camera" => a.no_camera = true,
             "--no-ui" => a.no_ui = true,
             "--no-chromatic-fix" => a.no_chromatic = true,
-            "--sharpen" => a.sharpen = true,
             "--help" | "-h" => a.help = true,
             "--version" | "-V" => a.version = true,
             _ => return Err(format!("unknown argument '{arg}'")),

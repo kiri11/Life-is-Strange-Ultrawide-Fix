@@ -22,7 +22,7 @@
 // The contract with the installer, which a change to either side must keep
 // (crates/installer/src/main.rs states the same):
 //   - arguments: install|restore|status|find, --exe PATH, --width W,
-//     --height H, --yes, --no-camera, --no-ui, --no-chromatic-fix, --sharpen
+//     --height H, --yes, --no-camera, --no-ui, --no-chromatic-fix
 //   - "find" prints one "known: <title>\t<short title>\t<exe name>" line per
 //     game the fix knows, "Game executable: <path>" for the game it picked,
 //     and one "found: <title>\t<short title>\t<path>" line per installed
@@ -125,7 +125,7 @@ namespace LiSUltrawidePatcher
 
         private TextBox txtExePath, txtWidth, txtHeight, txtLog;
         private ComboBox cmbExe, cmbPresets;
-        private CheckBox chkExe, chkGameFiles, chkChromatic, chkSharpen;
+        private CheckBox chkExe, chkGameFiles, chkChromatic;
         private Button btnBrowse, btnInstall, btnRestore;
         private Label lblExeHeader, lblCustom, lblX, lblExeStatus, lblFilesStatus;
         private TableLayoutPanel exeRow;
@@ -159,15 +159,9 @@ namespace LiSUltrawidePatcher
 
         private CheckBox Option(TableLayoutPanel host, string title, string detail)
         {
-            return Option(host, title, detail, true);
-        }
-
-        private CheckBox Option(TableLayoutPanel host, string title, string detail,
-                                bool on)
-        {
             CheckBox c = new CheckBox();
             c.Text = title;
-            c.Checked = on;
+            c.Checked = true;
             c.AutoSize = true;
             c.Margin = new Padding(0, 6, 0, 0);
             c.Font = new Font(Font, FontStyle.Bold);
@@ -317,12 +311,10 @@ namespace LiSUltrawidePatcher
                 + "real screen edge. Adds a mod container next to the game data.");
             chkChromatic = Option(opts, "Disable chromatic aberration",
                 "Removes the colour fringing at the widened edges.");
-            chkSharpen = Option(opts, "Reduce blurriness",
-                "Recommended TSR settings for this resolution.", false);
             root.Controls.Add(opts);
 
             Label note = new Label();
-            note.Text = "The last two write into Engine.ini. Restore removes them.";
+            note.Text = "The last one writes into Engine.ini. Restore removes it.";
             note.AutoSize = true;
             note.MaximumSize = new Size(ContentWidth, 0);
             note.ForeColor = SystemColors.GrayText;
@@ -1071,8 +1063,7 @@ namespace LiSUltrawidePatcher
         {
             string common = CommonArgs();
             if (common == null) return;
-            if (!chkExe.Checked && !chkGameFiles.Checked &&
-                !chkChromatic.Checked && !chkSharpen.Checked)
+            if (!chkExe.Checked && !chkGameFiles.Checked && !chkChromatic.Checked)
             {
                 MessageBox.Show("Nothing is selected.", "Nothing to do",
                                 MessageBoxButtons.OK, MessageBoxIcon.Information);
@@ -1082,7 +1073,6 @@ namespace LiSUltrawidePatcher
             if (!chkExe.Checked) args += " --no-camera";
             if (!chkGameFiles.Checked) args += " --no-ui";
             if (!chkChromatic.Checked) args += " --no-chromatic-fix";
-            if (chkSharpen.Checked) args += " --sharpen";
             Run(args);
         }
 
