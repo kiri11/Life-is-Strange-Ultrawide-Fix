@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use lis_ultrawide_core::games::{self, Game};
 use lis_ultrawide_core::report::{InstallError, Report, Stdout};
 use lis_ultrawide_core::ui_layout::UiStatus;
-use lis_ultrawide_core::{VERSION, display, engine_ini, loader_install, locate, ui_layout};
+use lis_ultrawide_core::{VERSION, display, engine_ini, loader_install, locate, pak_ui, ui_layout};
 
 use crate::ui::{self, Ui};
 use crate::{Args, Command, dialog, shipped_loader};
@@ -206,6 +206,10 @@ fn has_fix(game: &dyn Game, exe: &Path, engine_ini: Option<&Path>) -> bool {
             return true;
         }
     }
+    if let (Some(fix), Some(paks)) = (game.pak_ui(), game.paks_dir(exe)) {
+        let (pak, record) = pak_ui::paths(&paks, fix);
+        if pak.is_file() || record.is_file() { return true; }
+    }
     engine_ini::engine_ini_path(game, Some(exe), engine_ini)
         .and_then(|p| std::fs::read(p).ok())
         .is_some_and(|bytes| String::from_utf8_lossy(&bytes).lines().any(|line| line.trim() == game.ini_markers().0))
@@ -233,7 +237,10 @@ fn run_inner(args: &Args, ui: &mut dyn Ui, out: &mut Out) -> R<i32> {
     let paks = game.paks_dir(&exe);
     let (ui_status, ui_detail) = match game.ui() {
         Some(fix) => ui_layout::check_ui(paks.as_deref(), fix),
-        None => (UiStatus::None, "no full-width UI fix for this game yet".to_string()),
+        None => match game.pak_ui() {
+            Some(fix) => pak_ui::check_ui(paks.as_deref(), fix),
+            None => (UiStatus::None, "no full-width UI fix for this game yet".to_string()),
+        },
     };
     if args.command == Command::Status {
         // machine-readable, for the Windows front-end
@@ -352,6 +359,10 @@ fn run_install(
             let r = ui_layout::restore_ui(paks, fix, &mut Indent(out));
             step(out, r);
         }
+        if parts.ui && let (Some(fix), Some(paks)) = (game.pak_ui(), &paks) {
+            let r = pak_ui::restore_ui(paks, fix, &mut Indent(out));
+            step(out, r);
+        }
         if parts.chromatic {
             // strips the whole managed block by its markers, so the anti-blur
             // settings older versions offered go with it
@@ -386,7 +397,13 @@ fn run_install(
                 let r = ui_layout::install_ui(paks, fix, width, height, &mut Indent(out));
                 step(out, r);
             }
-            _ => out.line("  not available for this game"),
+            _ => match (game.pak_ui(), &paks) {
+                (Some(fix), Some(paks)) => {
+                    let r = pak_ui::install_ui(paks, fix, width, height, &mut Indent(out));
+                    step(out, r);
+                }
+                _ => out.line("  not available for this game"),
+            },
         }
     } else {
         out.line("  skipped");
@@ -407,7 +424,7 @@ fn run_install(
     out.line("");
     out.line(&"=".repeat(60));
     out.line(" Done.");
-    out.line(" Launch the game through Steam.");
+    out.line(" Launch the game as usual.");
     out.line(&"=".repeat(60));
     Ok(0)
 }

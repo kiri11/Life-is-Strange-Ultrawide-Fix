@@ -20,7 +20,7 @@ fn main() {
     let mut res = winresource::WindowsResource::new();
     res.set("CompanyName", "Kiri11");
     res.set("ProductName", "Life is Strange - Ultrawide Fix");
-    res.set("FileDescription", "Ultrawide camera fix loader for Life is Strange: Double Exposure and Reunion");
+    res.set("FileDescription", "Ultrawide camera fix loader for Life is Strange: Double Exposure, Reunion and True Colors");
     res.set("InternalName", "LiSUltrawideCamera");
     res.set("OriginalFilename", "LiSUltrawideCamera.dll");
     res.set("LegalCopyright", "Copyright (C) 2026 Kiri11. GPL-3.0-or-later; see LICENSE.");

@@ -19,6 +19,7 @@ use std::path::{Path, PathBuf};
 use lis_ultrawide_core::engine_ini::{apply_engine_ini, engine_ini_path};
 use lis_ultrawide_core::games::Game;
 use lis_ultrawide_core::games::double_exposure::DOUBLE_EXPOSURE;
+use lis_ultrawide_core::games::true_colors::TRUE_COLORS;
 use lis_ultrawide_core::report::write_failure;
 use lis_ultrawide_core::{display, locate, steam};
 
@@ -26,6 +27,22 @@ fn same(a: &Path, b: &Path) -> bool {
     steam::path_key(a) == steam::path_key(b)
 }
 
+#[test]
+fn true_colors_descriptor_uses_its_installed_paths() {
+    let game: &dyn Game = &TRUE_COLORS;
+    assert_eq!(game.steam_appid(), 936790);
+    assert_eq!(game.project(), "Siren");
+    assert_eq!(game.exe_name(), "Siren-Win64-Shipping.exe");
+    assert_eq!(game.install_dir(), "LifeIsStrange3");
+    assert_eq!(
+        game.exe_relative(),
+        Path::new("Siren/Binaries/Win64/Siren-Win64-Shipping.exe")
+    );
+    assert_eq!(
+        game.engine_ini_relative(),
+        Path::new("Siren/Saved/Config/WindowsNoEditor/Engine.ini")
+    );
+}
 #[test]
 fn finds_the_game_and_its_prefix_in_a_fake_steam_layout() {
     let game: &dyn Game = &DOUBLE_EXPOSURE;

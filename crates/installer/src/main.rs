@@ -89,7 +89,7 @@ Usage: lis-ultrawide-fix [install|restore|status|find] [options]
 
 Options:
   --exe PATH          the game executable (found automatically when omitted)
-  --game ID           which game: double-exposure or reunion (detected when omitted)
+  --game ID           which game: double-exposure, reunion or true-colors (detected when omitted)
   --width W           display width, e.g. 5120 (detected when omitted)
   --height H          display height, e.g. 2160
   --yes, -y           accept the defaults, never ask, never open a dialog

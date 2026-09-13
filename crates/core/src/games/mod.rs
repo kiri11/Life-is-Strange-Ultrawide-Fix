@@ -10,6 +10,7 @@
 
 pub mod double_exposure;
 pub mod reunion;
+pub mod true_colors;
 
 use std::path::{Path, PathBuf};
 
@@ -18,7 +19,7 @@ use crate::scan::Image;
 use crate::ui_layout::UiFix;
 
 pub trait Game: Sync {
-    /// `"double-exposure"` or `"reunion"`: what `--game` takes.
+    /// The identifier accepted by `--game`.
     fn id(&self) -> &'static str;
     fn title(&self) -> &'static str;
     /// `"Double Exposure"`: the title without the series name, for lists
@@ -41,7 +42,8 @@ pub trait Game: Sync {
         &["winhttp.dll"]
     }
     fn plan_camera(&self, image: &Image, gate_upper: [u8; 4]) -> Result<Plan, String>;
-    /// None until the game's UI packages are known.
+    fn pak_ui(&self) -> Option<&'static crate::pak_ui::PakUiFix> { None }
+    /// IoStore UI assets, or None for games using classic pak archives.
     fn ui(&self) -> Option<&'static UiFix>;
     /// The markers of the managed block in the user's Engine.ini. They are
     /// part of the on-disk contract with existing installs: never change
@@ -60,14 +62,20 @@ pub trait Game: Sync {
         let project = win64.parent()?.parent()?;
         Some(project.join("Content").join("Paks"))
     }
-    /// `<project>/Saved/Config/Windows/Engine.ini` below a Local AppData folder.
+    /// The Unreal configuration directory below `<project>/Saved/Config`.
+    /// Most games use `Windows`; games that use another platform spelling can
+    /// override this without reimplementing the complete relative path.
+    fn config_dir(&self) -> &'static str {
+        "Windows"
+    }
+    /// `<project>/Saved/Config/<config_dir>/Engine.ini` below a Local AppData folder.
     fn engine_ini_relative(&self) -> PathBuf {
-        Path::new(self.project()).join("Saved").join("Config").join("Windows").join("Engine.ini")
+        Path::new(self.project()).join("Saved").join("Config").join(self.config_dir()).join("Engine.ini")
     }
 }
 
 /// Every game the fix knows, in the order the installer offers them.
-pub static GAMES: &[&dyn Game] = &[&double_exposure::DOUBLE_EXPOSURE, &reunion::REUNION];
+pub static GAMES: &[&dyn Game] = &[&double_exposure::DOUBLE_EXPOSURE, &reunion::REUNION, &true_colors::TRUE_COLORS];
 
 pub fn game_for_exe(exe_name: &str) -> Option<&'static dyn Game> {
     GAMES.iter().copied().find(|g| g.exe_name().eq_ignore_ascii_case(exe_name))
