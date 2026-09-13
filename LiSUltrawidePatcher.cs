@@ -311,16 +311,8 @@ namespace LiSUltrawidePatcher
                 "Loading screens cover the whole screen and the HUD sits on the "
                 + "real screen edge. Adds a mod container next to the game data.");
             chkChromatic = Option(opts, "Disable chromatic aberration",
-                "Removes the colour fringing at the widened edges.");
+                "Removes the colour fringing at the widened edges. Writes into Engine.ini.");
             root.Controls.Add(opts);
-
-            Label note = new Label();
-            note.Text = "The last one writes into Engine.ini. Restore removes it.";
-            note.AutoSize = true;
-            note.MaximumSize = new Size(ContentWidth, 0);
-            note.ForeColor = SystemColors.GrayText;
-            note.Margin = new Padding(0, 4, 0, 8);
-            root.Controls.Add(note);
 
             // --- actions
             TableLayoutPanel buttons = new TableLayoutPanel();
