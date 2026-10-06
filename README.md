@@ -96,7 +96,7 @@ Then pick **Native** in the game's Steam properties; 5120x2160 is not in Steam's
 | Option | Effect | Changes |
 | :--- | :--- | :--- |
 | **Ultrawide camera** | Full-width cutscenes, dialogue and exploration | adds `winhttp.dll`, the loader, next to the game executable (`Chronos/Binaries/Win64`, `Iris/Binaries/Win64`, or `Siren/Binaries/Win64`) |
-| **Full-width UI** | Loading screens and HUD use the whole screen; the major-choice highlight and the recap video keep their proportions | adds `Content/Paks/Mods/LiSUltrawideUI_P.*` next to the game data (`Chronos/Content/Paks`, `Iris/Content/Paks`, or `Siren/Content/Paks`) |
+| **Full-width UI** | Loading screens and HUD use the whole screen; the major-choice highlight, the recap video and other full-screen pictures keep their proportions | adds `Content/Paks/Mods/LiSUltrawideUI_P.*` next to the game data (`Chronos/Content/Paks`, `Iris/Content/Paks`, or `Siren/Content/Paks`) |
 | **Disable chromatic aberration** | Removes colour fringing at the edges | `Engine.ini` |
 
 The loader writes `LiSUltrawideCamera.log` next to itself at every launch, saying what it did. The `Engine.ini` setting is added as a clearly marked block. Running the installer again never stacks changes. **Restore** also removes what older versions of the fix installed: the anti-blur settings that used to be an option in the same block, and an executable edited in place by a version from before September 2026 is put back to stock from its backup.

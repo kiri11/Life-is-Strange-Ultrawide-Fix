@@ -129,20 +129,42 @@ static REUNION_EDITS: &[Edit] = &[
     edit!("BP/Window/BP_MainMenuWindow.uasset", "InfocastPanel", Left, -220.0, NewValue::Outset(-220.0)),
     edit!("BP/Window/BP_TitleWindow.uasset", "GamerTag", Left, 220.0, NewValue::Inset(220.0)),
     edit!("BP/Window/BP_TitleWindow.uasset", "PressAnyKey", Left, 220.0, NewValue::Inset(220.0)),
+    // --- 13l: the desktop icons, placed on the 3840 background
+    edit!("BP/Controls/Pages/EP7_S3_A_Computer/BP_EP7_S3_A_Desktop.uasset", "PageMenu", Left, 222.89949, NewValue::Inset(222.89949)),
 ];
 
-/// RESEARCH.md 13j: the recap video. `BP_VideoWindow` draws the Bink
-/// texture on a `D9Image` stretched across the window, so the widened
-/// `WindowParent` stretches the picture. The image is inset on both sides
-/// to the centred 16:9 band; the window's black shows either side. Left
-/// and Right are absent from the cooked payload, hence a reslot.
-static REUNION_RESLOTS: &[Reslot] = &[Reslot {
-    package: "BP/Window/BP_VideoWindow.uasset",
-    widget: "D9Image",
-    parent: Some("MainPanel"),
-    old: [0.0, 0.0, 0.0, -1.0],
-    new: [NewValue::Inset(0.0), NewValue::Value(0.0), NewValue::Inset(0.0), NewValue::Value(-1.0)],
-}];
+const STRETCH: [f32; 4] = [0.0, 0.0, 0.0, 0.0];
+const BAND: [NewValue; 4] = [NewValue::Inset(0.0), NewValue::Value(0.0), NewValue::Inset(0.0), NewValue::Value(0.0)];
+const PINNED: [f32; 4] = [0.0, 0.0, 100.0, 100.0];
+const PINNED_CENTRED: [NewValue; 4] = [NewValue::Inset(0.0), NewValue::Value(0.0), NewValue::Value(100.0), NewValue::Value(100.0)];
+
+macro_rules! reslot {
+    ($pkg:expr, $widget:expr, $parent:expr, $old:expr, $new:expr) => {
+        Reslot { package: $pkg, widget: $widget, parent: Some($parent), old: $old, new: $new }
+    };
+}
+
+/// Slots whose offsets the cooked payload leaves out, so a reslot. RESEARCH
+/// 13j: the recap video, inset on both sides to the centred 16:9 band; the
+/// window's black shows either side. 13l: the 16:9 pictures that are
+/// stretched across the widened `WindowParent` go into the same band, and
+/// the 3840-wide backgrounds pinned to its left edge move to the band's.
+static REUNION_RESLOTS: &[Reslot] = &[
+    reslot!(
+        "BP/Window/BP_VideoWindow.uasset",
+        "D9Image",
+        "MainPanel",
+        [0.0, 0.0, 0.0, -1.0],
+        [NewValue::Inset(0.0), NewValue::Value(0.0), NewValue::Inset(0.0), NewValue::Value(-1.0)]
+    ),
+    reslot!("BP/Window/BP_ImageWindow.uasset", "FullscreenImage", "MainPanel", STRETCH, BAND),
+    reslot!("BP/Controls/PlayerMenu/Journal/BP_JournalTabUI.uasset", "JournalBackground", "MainPanel", STRETCH, BAND),
+    reslot!("BP/Controls/PlayerMenu/Journal/BP_JournalTabUI.uasset", "ContentPanel", "MainPanel", STRETCH, BAND),
+    reslot!("BP/Controls/Pages/EP7_S5_A_Laptop/BP_EP7_S5_A_MsgBoard.uasset", "D9Image", "MainPanel", PINNED, PINNED_CENTRED),
+    reslot!("BP/Window/BP_EP7_S5_A_LaptopWindow.uasset", "InputButtonBarOverride", "MainPanel", STRETCH, BAND),
+    reslot!("BP/Controls/Pages/EP7_S3_A_Computer/BP_EP7_S3_A_Desktop.uasset", "D9Image", "MainPanel", PINNED, PINNED_CENTRED),
+    reslot!("BP/Window/BP_EP7_S3_A_ComputerWindow.uasset", "InputButtonBarOverride", "MainPanel", STRETCH, BAND),
+];
 
 static REUNION_UI: UiFix = UiFix {
     source: "pakchunk0-Windows",

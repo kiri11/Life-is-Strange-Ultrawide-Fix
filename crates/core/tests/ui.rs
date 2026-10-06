@@ -374,7 +374,7 @@ fn reads_and_rewrites_reunions_ui_packages() {
     for l in &lines {
         eprintln!("{l}");
     }
-    assert_eq!((built.applied, built.failed), (17 + 19, 0));
+    assert_eq!((built.applied, built.failed), (23 + 19, 0));
 
     let dir = std::env::temp_dir().join(format!("lis-reunion-ui-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -383,11 +383,11 @@ fn reads_and_rewrites_reunions_ui_packages() {
     std::fs::write(base.with_extension("ucas"), &built.ucas).unwrap();
     let mut mod_toc = Toc::open(&base.with_extension("utoc")).unwrap();
     assert_eq!(mod_toc.version, 8);
-    assert_eq!(mod_toc.entries(), 18 + 19);
-    assert_eq!(mod_toc.index.len(), 17 + 19);
+    assert_eq!(mod_toc.entries(), 24 + 19);
+    assert_eq!(mod_toc.index.len(), 23 + 19);
     let mh = mod_toc.find_type(CHUNK_CONTAINER_HEADER).unwrap();
     let (_, mod_entries) = parse_container_header(&mod_toc.read(mh).unwrap(), 4).unwrap();
-    assert_eq!(mod_entries.len(), 17 + 19);
+    assert_eq!(mod_entries.len(), 23 + 19);
     check_masks(&mut toc, &mut mod_toc, &entries, &mod_entries, "Iris/Content/VFX/MajorChoice/Masks/", Summary::Ue53, 5120.0 / 3840.0, 19);
 
     // 13j: the video window's image slot is re-serialised and its export
@@ -422,6 +422,52 @@ fn reads_and_rewrites_reunions_ui_packages() {
     let stock_last = stock_pkg.exports.iter().map(|e| stock_pkg.export_offset(e.index).unwrap() + e.size as usize).max().unwrap();
     assert_eq!(&data[last..], &stock[stock_last..]);
     assert_eq!(data.len() - last, 4);
+
+    // 13l: the same for every package with a reslot, which may also carry
+    // in-place edits: each reslotted slot has its new offsets and otherwise
+    // the stock fields, each edited slot only its edited field changed,
+    // every other export and the tail as they were
+    let mut reslotted: Vec<&str> = ui.reslots.iter().map(|r| r.package).collect();
+    reslotted.dedup();
+    assert_eq!(reslotted.len(), 7);
+    for short in reslotted {
+        let path = format!("{}{short}", ui.ui_prefix);
+        let stock = toc.read(toc.index[&path]).unwrap();
+        let idx = mod_toc.index[&path];
+        let data = mod_toc.read(idx).unwrap();
+        assert_eq!(mod_entries[&package_id_of(&mod_toc.chunk_ids[idx])], entries[&package_id_of(&toc.chunk_ids[toc.index[&path]])]);
+        let stock_pkg = ZenPackage::parse(&stock, Summary::Ue53).unwrap();
+        let pkg = ZenPackage::parse(&data, Summary::Ue53).unwrap();
+        assert_eq!(pkg.exports.len(), stock_pkg.exports.len());
+        assert_eq!(pkg.header_size, stock_pkg.header_size);
+        let mut changed = std::collections::BTreeSet::new();
+        for rs in ui.reslots.iter().filter(|r| r.package == short) {
+            let (export, slot, _, _) = slot_payload_in(&pkg, rs.widget, rs.parent, &so).unwrap();
+            let (stock_export, stock_slot, _, _) = slot_payload_in(&stock_pkg, rs.widget, rs.parent, &so).unwrap();
+            assert_eq!(export, stock_export);
+            assert_eq!(stock_slot.offsets, rs.old, "{path}: {}", rs.widget);
+            assert_eq!(slot.offsets, rs.new.map(|v| v.apply(dw, ui.design) as f32), "{path}: {}", rs.widget);
+            assert_eq!(Slot { offsets: stock_slot.offsets, ..slot.clone() }, stock_slot, "{path}: {}", rs.widget);
+            changed.insert(export);
+        }
+        for edit in ui.edits.iter().filter(|e| e.package == short) {
+            let (export, slot, _, _) = slot_payload(&pkg, edit.widget, &so).unwrap();
+            let mut want = slot_payload(&stock_pkg, edit.widget, &so).unwrap().1;
+            want.offsets[edit.field as usize] = edit.new.apply(dw, ui.design) as f32;
+            assert_eq!(slot, want, "{path}: {}", edit.widget);
+            assert!(changed.insert(export));
+        }
+        for (e, s) in pkg.exports.iter().zip(&stock_pkg.exports) {
+            assert_eq!(e.name, s.name);
+            if !changed.contains(&e.index) {
+                assert_eq!(pkg.export_data(e), stock_pkg.export_data(s), "{path}: {}", e.name);
+            }
+        }
+        let last = pkg.exports.iter().map(|e| pkg.export_offset(e.index).unwrap() + e.size as usize).max().unwrap();
+        let stock_last = stock_pkg.exports.iter().map(|e| stock_pkg.export_offset(e.index).unwrap() + e.size as usize).max().unwrap();
+        assert_eq!(&data[last..], &stock[stock_last..], "{path}");
+    }
+
     for p in REUNION_PACKAGES {
         let stock = toc.read(toc.index[p.path]).unwrap();
         let idx = mod_toc.index[p.path];

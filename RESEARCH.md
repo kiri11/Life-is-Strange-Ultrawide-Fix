@@ -826,6 +826,18 @@ The Double Exposure masks are per-scene (`EP1_S2A_MC_Intro_L/R`, `Ep2_S2B_MajorC
 
 Not yet seen in the game: this needs a save at a major choice. What is verified is the file side above and that both games start with the containers mounted.
 
+### 13l. Pinned Backgrounds and Stretched Overlays (2026-10-05)
+
+Reported at 32:9: on the Episode 7 forum page (`BP_EP7_S5_A_LaptopWindow`) the text is centred but the page picture sits at the left; and the Square Enix and Reunion logos over the opening drive are stretched. Neither showed in the 13i audit, which looked for 3840 in the offsets: these slots have no width at all.
+
+* **Pinned backgrounds.** `BP_EP7_S5_A_MsgBoard` draws `Message_Board_Background` (3840x2160, with the stats columns and title bar painted in) in an auto-sized slot at the top-left point anchor of a full-stretch `MainPanel`, so it takes its texture's size at the left edge of the widened window; the forum text is in `PageScroll`, anchored at the centre. `BP_EP7_S3_A_Desktop` (the Episode 7 computer) is the same with `Computer_Background`, and its icon menu `PageMenu` is placed at `(222.9, 206.4)` on that picture. The fix moves both backgrounds to the left edge of the centred band (`Left = (designW - 3840) / 2`; Left is absent from the payload, so a reslot) and re-insets `PageMenu` (an in-place edit). The two windows' `InputButtonBarOverride` (full-stretch) is inset to the band too, so the prompts stay on the picture's bottom bar. The computer's e-mail and document pages are centred by their own anchors and keep their full-width blur.
+* **Stretched overlays.** The logos are not in the UI folder's windows by name: `S2A_002_LEAFPEEP_A_Master` carries a `D9UIImageEventSection` naming `UI/Images/Events/Logo_SE_White`, `Logo_D9_White` and `TitleCard_White` by soft reference (the store entry imports nothing; a byte search of the cinematics found them). The section shows them in `BP_ImageWindow`'s `FullscreenImage`, a full-stretch slot. The textures are 1920x1080 DXT5 with alpha, a 16:9 frame each, so the widened window stretches them. `FullscreenImage` is inset to the band, as the recap video is in 13j; the scene shows either side. Only three sequences use the section (`S2A_015_BLOWINUP` and `S2B_018_BLOWOUT` show `TitleCard_White`), and the opaque `Logo_TitleCards_*` cards are referenced by none of them.
+* **The journal.** `BP_JournalTabUI` stretches `JournalBackground` (3840x2160, the open notebook) across the window while every page (`Journal/Pages/*`) is a 3840x2160 picture with text at absolute positions, pinned top-left in `ContentPanel`: notebook stretched, pages at the left. Both slots are inset to the band; the page control's halves and centred page number stay as they are.
+
+A sweep for the pattern (an image in an auto-sized slot at the `(0,0)` point anchor whose package imports a texture 2000 or more wide) found, beyond these, the collectible tabs and the photography overlay, which sit inside the deliberate 3840x2160 boxes of 13i, and `BP_EP6_S1_A_ChoicesWindow`, whose pinned image is a vignette and whose `ChoicesBG` stretches. The test `reads_and_rewrites_reunions_ui_packages` checks every reslotted package: the slot's new offsets with its other fields as stock, an edited slot changed in its one field, every other export and the tail unchanged. The container now carries 23 packages and the 19 masks.
+
+Not yet seen in the game: the forum and the computer are Episode 7 scenes, the logos need a new game, the journal needs a save.
+
 
 ## 14. True Colors (2026-09-13)
 
