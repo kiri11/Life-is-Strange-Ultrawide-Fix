@@ -750,7 +750,7 @@ pub enum UiStatus {
     /// the container matches the build of the game on disk
     Current,
     /// the game was updated after the container was built, so it now
-    /// shadows ten packages with copies cooked for an older build
+    /// shadows its packages with copies cooked for an older build
     Stale,
     /// the files are there but nothing says what they were built from -
     /// an older release of this fix, or a hand copy

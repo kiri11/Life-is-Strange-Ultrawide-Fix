@@ -23,7 +23,7 @@ use lis_ultrawide_core::iostore::{
 };
 use lis_ultrawide_core::bc;
 use lis_ultrawide_core::texture::parse_texture;
-use lis_ultrawide_core::ui_layout::{build_mod, build_mod_with, design_space, slot_payload, slot_payload_in};
+use lis_ultrawide_core::ui_layout::{Edit, Field, NewValue, UiFix, build_mod, build_mod_with, design_space, slot_payload, slot_payload_in};
 use lis_ultrawide_core::unver::Slot;
 use lis_ultrawide_core::zen::{ScriptObjects, Summary, ZenPackage};
 use lis_ultrawide_core::{hash, to_hex};
@@ -94,8 +94,6 @@ const PACKAGES: &[PkgRef] = &[
         ] },
     PkgRef { path: "Chronos/Content/UI/BP/Controls/Settings/BP_UISettings.uasset", index: 53705, chunk: "a6626d04d8585e2300000001", size: 12061, sha256: "432b06aa5de82ae3c2244391c76ba240766acf4518ea0137c148dbb37ec3b747", exports: 48, name: "/Game/UI/BP/Controls/Settings/BP_UISettings", entry: (48, 1, 7),
         slots: &[slot!("Buttons", 14, 7917, 29, 8, [0.0, 0.0, 3840.0, 2160.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 16, 23)] },
-    PkgRef { path: "Chronos/Content/UI/BP/Controls/PlayerMenu/Collectibles/BP_CollectiblePosterUI.uasset", index: 33977, chunk: "d598d203f5b3cde700000001", size: 12815, sha256: "93d188a57e0acb93e9e08a48e5a98e4acb1f255515408913f711d31b3cef231f", exports: 82, name: "/Game/UI/BP/Controls/PlayerMenu/Collectibles/BP_CollectiblePosterUI", entry: (82, 1, 7),
-        slots: &[slot!("D9Image", 28, 11045, 28, 8, [0.0, 0.0, 3840.0, 2160.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 44, 41)] },
     PkgRef { path: "Chronos/Content/UI/BP/Controls/Choices/BP_ShiftChoiceUI.uasset", index: 26462, chunk: "bd984f3843bd43b700000001", size: 3243, sha256: "c1b34170133414b0d8a8c6623d66279035d384b503dc2f4455410c7587324413", exports: 16, name: "/Game/UI/BP/Controls/Choices/BP_ShiftChoiceUI", entry: (16, 1, 1),
         slots: &[slot!("ChoiceButton", 2, 2553, 79, 8, [0.0, 0.0, 3840.0, 2160.0], (0.0, 1.0), (0.0, 1.0), (0.0, 1.0), 5, 6)] },
     PkgRef { path: "Chronos/Content/UI/BP/Window/BP_MainMenuWindow.uasset", index: 54713, chunk: "26f89c0653e4127600000001", size: 8540, sha256: "6f6737cb0d36751ee0dbfeec8bf50e302347dec9c1be376004d55cc9b26b1ab1", exports: 50, name: "/Game/UI/BP/Window/BP_MainMenuWindow", entry: (50, 1, 6),
@@ -276,7 +274,7 @@ fn check_masks(toc: &mut Toc, mod_toc: &mut Toc, entries: &BTreeMap<u64, StoreEn
 }
 
 /// Double Exposure's masks (RESEARCH 13k), built for 5120x2160 and read
-/// back: 29 textures, DXT1 and DXT5, next to the ten UI packages.
+/// back: 29 textures, DXT1 and DXT5, next to the nine UI packages.
 #[test]
 fn refits_double_exposures_masks() {
     let Some(paks) = paks() else { return };
@@ -289,7 +287,7 @@ fn refits_double_exposures_masks() {
     for l in &lines {
         eprintln!("{l}");
     }
-    assert_eq!((built.applied, built.failed), (10 + 29, 0));
+    assert_eq!((built.applied, built.failed), (9 + 29, 0));
     let dir = std::env::temp_dir().join(format!("lis-de-masks-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
     let base = dir.join(ui.mod_name);
@@ -299,7 +297,7 @@ fn refits_double_exposures_masks() {
     let h = toc.find_type(CHUNK_CONTAINER_HEADER).unwrap();
     let (_, entries) = parse_container_header(&toc.read(h).unwrap(), 2).unwrap();
     let mut mod_toc = Toc::open(&base.with_extension("utoc")).unwrap();
-    assert_eq!(mod_toc.index.len(), 10 + 29);
+    assert_eq!(mod_toc.index.len(), 9 + 29);
     let mh = mod_toc.find_type(CHUNK_CONTAINER_HEADER).unwrap();
     let (_, mod_entries) = parse_container_header(&mod_toc.read(mh).unwrap(), 2).unwrap();
     check_masks(&mut toc, &mut mod_toc, &entries, &mod_entries, "Chronos/Content/VFX/MajorChoice/Masks/", Summary::Ue52, dw / 3840.0, 29);
@@ -307,7 +305,7 @@ fn refits_double_exposures_masks() {
     let (dw169, _) = design_space(3840, 2160, ui.design);
     let mut lines = Vec::new();
     let built = build_mod(&paks, ui, dw169, &so, &mut lines).unwrap();
-    assert_eq!((built.applied, built.failed), (10, 0));
+    assert_eq!((built.applied, built.failed), (9, 0));
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -487,7 +485,12 @@ fn builds_the_same_container_as_the_python_writer() {
     };
     let reference = PathBuf::from(reference);
     let game: &dyn Game = &DOUBLE_EXPOSURE;
-    let ui = game.ui().unwrap();
+    let current = game.ui().unwrap();
+    // the Python writer also edited the poster reader that 13m dropped
+    let mut edits: Vec<Edit> = current.edits.iter().map(|e| Edit { ..*e }).collect();
+    let poster = "BP/Controls/PlayerMenu/Collectibles/BP_CollectiblePosterUI.uasset";
+    edits.insert(7, Edit { package: poster, widget: "D9Image", field: Field::Right, old: 3840.0, new: NewValue::Width });
+    let ui = &UiFix { edits: edits.leak(), ..*current };
     let so = load_script_objects(&paks.join("global.utoc")).unwrap();
     let (dw, _) = design_space(5120, 2160, ui.design);
     let mut lines = Vec::new();

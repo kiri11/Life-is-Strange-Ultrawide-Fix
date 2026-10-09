@@ -88,11 +88,12 @@ macro_rules! edit {
     };
 }
 
-/// RESEARCH.md 9c-3: the 15 slot edits. `WindowParent` is the fix itself;
-/// the rest repair elements positioned by absolute coordinates on the 3840
-/// canvas, which would otherwise shift left. Every edit rewrites an existing
-/// float in place, so package sizes never change. Package paths are below
-/// `UiFix::ui_prefix`.
+/// RESEARCH.md 9c-3: the slot edits, less the collectible poster reader,
+/// which sits in the player menu's own 3840 box (13m). `WindowParent` is the
+/// fix itself; the rest repair elements positioned by absolute coordinates on
+/// the 3840 canvas, which would otherwise shift left. Every edit rewrites an
+/// existing float in place, so package sizes never change. Package paths are
+/// below `UiFix::ui_prefix`.
 static DE_EDITS: &[Edit] = &[
     // --- the fix itself
     edit!("BP/BP_UIWindowManager.uasset", "WindowParent", Right, 3840.0, NewValue::Width),
@@ -104,7 +105,6 @@ static DE_EDITS: &[Edit] = &[
     edit!("BP/Window/BP_SquareEnixAccountWindow.uasset", "CanvasPanel_Background", Right, 3840.0, NewValue::Width),
     edit!("BP/Window/BP_SquareEnixAccountWindow.uasset", "WidgetSwitcher_CurrentView", Right, 3840.0, NewValue::Width),
     edit!("BP/Controls/Settings/BP_UISettings.uasset", "Buttons", Right, 3840.0, NewValue::Width),
-    edit!("BP/Controls/PlayerMenu/Collectibles/BP_CollectiblePosterUI.uasset", "D9Image", Right, 3840.0, NewValue::Width),
     edit!("BP/Controls/Choices/BP_ShiftChoiceUI.uasset", "ChoiceButton", Right, 3840.0, NewValue::Width),
     // --- full-bleed 16:9 compositions: re-inset so they keep their authored
     //     framing instead of riding out to the physical screen edges.
