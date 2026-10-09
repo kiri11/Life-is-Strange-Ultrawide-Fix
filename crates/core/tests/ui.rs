@@ -205,8 +205,6 @@ const REUNION_PACKAGES: &[PkgRef] = &[
         ] },
     PkgRef { path: "Iris/Content/UI/BP/Window/BP_OutfitWindow.uasset", index: 47397, chunk: "39f26d001816402200000001", size: 4151, sha256: "39a3a10dea9d625a0a33b3c6abba5ce58717237a0e4c8dd7c9e70127985d3665", exports: 16, name: "/Game/UI/BP/Window/BP_OutfitWindow", entry: (0, 0, 8),
         slots: &[slot!("Background", 5, 3426, 28, 8, [0.0, 0.0, 3840.0, 2162.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 12, 11)] },
-    PkgRef { path: "Iris/Content/UI/BP/Window/BP_MontageWindow.uasset", index: 61022, chunk: "fbf2887be131aac800000001", size: 19588, sha256: "0deb19e914eca7c69a6301ba2905a9d5c271c2389c86fe804dc3d179ac2acf60", exports: 94, name: "/Game/UI/BP/Window/BP_MontageWindow", entry: (0, 0, 19),
-        slots: &[slot!("Background", 31, 15598, 29, 8, [0.0, 0.0, 3840.0, 2160.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 61, 58)] },
     PkgRef { path: "Iris/Content/UI/BP/Window/BP_FRPosterWindow.uasset", index: 70012, chunk: "bf3410da04cb45fe00000001", size: 8704, sha256: "fbd25fcea37bf4e433b30758a084cb679dafe49d2713b62a85c50f91b70a39b4", exports: 42, name: "/Game/UI/BP/Window/BP_FRPosterWindow", entry: (0, 0, 10),
         slots: &[
             slot!("D9Image", 12, 7400, 28, 8, [0.0, 0.0, 3840.0, 2160.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 23, 22),
@@ -217,20 +215,6 @@ const REUNION_PACKAGES: &[PkgRef] = &[
         slots: &[slot!("Buttons", 14, 9014, 29, 8, [0.0, 0.0, 3840.0, 2160.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 16, 23)] },
     PkgRef { path: "Iris/Content/UI/BP/Controls/Settings/BP_OutfitSettings.uasset", index: 20010, chunk: "9f9a08c8419418fe00000001", size: 5283, sha256: "a702256f382d272eefe5691fc930f2de6873800625b72e52989081447e5eaa8e", exports: 22, name: "/Game/UI/BP/Controls/Settings/BP_OutfitSettings", entry: (0, 0, 2),
         slots: &[slot!("Buttons", 4, 3960, 29, 8, [0.0, 0.0, 3840.0, 2160.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 6, 10)] },
-    PkgRef { path: "Iris/Content/UI/BP/Controls/PlayerMenu/Collectibles/BP_CollectiblePosterUI.uasset", index: 9049, chunk: "d598d203f5b3cde700000001", size: 15429, sha256: "dc0009e1dfb92cb7721710e5661b94e4ef1087b256996b1eedc4cab5d6a9d555", exports: 82, name: "/Game/UI/BP/Controls/PlayerMenu/Collectibles/BP_CollectiblePosterUI", entry: (0, 0, 6),
-        slots: &[slot!("D9Image", 28, 12581, 28, 8, [0.0, 0.0, 3840.0, 2160.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 44, 41)] },
-    PkgRef { path: "Iris/Content/UI/BP/Controls/PlayerMenu/Collectibles/BP_ChloePhotoPosterUI.uasset", index: 37806, chunk: "3d4a4bf259cd753d00000001", size: 17838, sha256: "c8cdadc6d1389bf563b7e7fb02107429f3eda04e1ff5beb3545f430d4b1ac0fd", exports: 94, name: "/Game/UI/BP/Controls/PlayerMenu/Collectibles/BP_ChloePhotoPosterUI", entry: (0, 0, 9),
-        slots: &[
-            slot!("D9Image", 34, 14544, 28, 8, [0.0, 0.0, 3840.0, 2160.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 55, 52),
-            slot!("UpButton", 37, 14674, 28, 8, [1870.0, 242.0, 100.0, 100.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 3, 52),
-            slot!("DownButton", 35, 14572, 28, 8, [1870.0, 1250.0, 100.0, 100.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 39, 52),
-        ] },
-    PkgRef { path: "Iris/Content/UI/BP/Controls/PlayerMenu/Collectibles/BP_IrisPhotoPosterUI.uasset", index: 8435, chunk: "9b481604c122c05900000001", size: 18209, sha256: "cd8b6767872a6fe80ad8c773fab3b58e9d4535d0f64af940535e91cd573f8054", exports: 96, name: "/Game/UI/BP/Controls/PlayerMenu/Collectibles/BP_IrisPhotoPosterUI", entry: (0, 0, 9),
-        slots: &[
-            slot!("D9Image", 35, 14871, 28, 8, [0.0, 0.0, 3840.0, 2160.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 56, 53),
-            slot!("UpButton", 38, 15001, 28, 8, [1870.0, 242.0, 100.0, 100.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 3, 53),
-            slot!("DownButton", 36, 14899, 28, 8, [1870.0, 1250.0, 100.0, 100.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 40, 53),
-        ] },
     PkgRef { path: "Iris/Content/UI/BP/Window/BP_ObjectInspectWindow.uasset", index: 49149, chunk: "20ec5c61e967133b00000001", size: 12283, sha256: "1a6ab89bf8d75518b83c3640c93640097f57ae2c721e6eb8c3483d02bbaa8551", exports: 50, name: "/Game/UI/BP/Window/BP_ObjectInspectWindow", entry: (0, 0, 10),
         slots: &[
             slot!("UpButton", 21, 8998, 28, 8, [1870.0, 242.0, 100.0, 100.0], (0.0, 0.0), (0.0, 0.0), (0.0, 0.0), 4, 34),
@@ -374,7 +358,7 @@ fn reads_and_rewrites_reunions_ui_packages() {
     for l in &lines {
         eprintln!("{l}");
     }
-    assert_eq!((built.applied, built.failed), (23 + 19, 0));
+    assert_eq!((built.applied, built.failed), (19 + 19, 0));
 
     let dir = std::env::temp_dir().join(format!("lis-reunion-ui-test-{}", std::process::id()));
     std::fs::create_dir_all(&dir).unwrap();
@@ -383,11 +367,11 @@ fn reads_and_rewrites_reunions_ui_packages() {
     std::fs::write(base.with_extension("ucas"), &built.ucas).unwrap();
     let mut mod_toc = Toc::open(&base.with_extension("utoc")).unwrap();
     assert_eq!(mod_toc.version, 8);
-    assert_eq!(mod_toc.entries(), 24 + 19);
-    assert_eq!(mod_toc.index.len(), 23 + 19);
+    assert_eq!(mod_toc.entries(), 20 + 19);
+    assert_eq!(mod_toc.index.len(), 19 + 19);
     let mh = mod_toc.find_type(CHUNK_CONTAINER_HEADER).unwrap();
     let (_, mod_entries) = parse_container_header(&mod_toc.read(mh).unwrap(), 4).unwrap();
-    assert_eq!(mod_entries.len(), 23 + 19);
+    assert_eq!(mod_entries.len(), 19 + 19);
     check_masks(&mut toc, &mut mod_toc, &entries, &mod_entries, "Iris/Content/VFX/MajorChoice/Masks/", Summary::Ue53, 5120.0 / 3840.0, 19);
 
     // 13j: the video window's image slot is re-serialised and its export

@@ -103,23 +103,17 @@ static REUNION_EDITS: &[Edit] = &[
     edit!("BP/Window/BP_SquareEnixAccountWindow.uasset", "CanvasPanel_Background", Right, 3840.0, NewValue::Width),
     edit!("BP/Window/BP_SquareEnixAccountWindow.uasset", "WidgetSwitcher_CurrentView", Right, 3840.0, NewValue::Width),
     edit!("BP/Window/BP_OutfitWindow.uasset", "Background", Right, 3840.0, NewValue::Width),
-    edit!("BP/Window/BP_MontageWindow.uasset", "Background", Right, 3840.0, NewValue::Width),
     edit!("BP/Window/BP_FRPosterWindow.uasset", "D9Image", Right, 3840.0, NewValue::Width),
     edit!("BP/Controls/Settings/BP_UISettings.uasset", "Buttons", Right, 3840.0, NewValue::Width),
     edit!("BP/Controls/Settings/BP_OutfitSettings.uasset", "Buttons", Right, 3840.0, NewValue::Width),
-    edit!("BP/Controls/PlayerMenu/Collectibles/BP_CollectiblePosterUI.uasset", "D9Image", Right, 3840.0, NewValue::Width),
-    edit!("BP/Controls/PlayerMenu/Collectibles/BP_ChloePhotoPosterUI.uasset", "D9Image", Right, 3840.0, NewValue::Width),
-    edit!("BP/Controls/PlayerMenu/Collectibles/BP_IrisPhotoPosterUI.uasset", "D9Image", Right, 3840.0, NewValue::Width),
     // --- the scroll buttons of the reading views, centred by an absolute
-    //     X on the 3840 canvas (1870 + half their 100 px width = 1920)
+    //     X on the 3840 canvas (1870 + half their 100 px width = 1920);
+    //     the collectible readers sit in the player menu's 3840 box and
+    //     are left as they are (13m)
     edit!("BP/Window/BP_FRPosterWindow.uasset", "UpButton", Left, 1870.0, NewValue::Inset(1870.0)),
     edit!("BP/Window/BP_FRPosterWindow.uasset", "DownButton", Left, 1870.0, NewValue::Inset(1870.0)),
     edit!("BP/Window/BP_ObjectInspectWindow.uasset", "UpButton", Left, 1870.0, NewValue::Inset(1870.0)),
     edit!("BP/Window/BP_ObjectInspectWindow.uasset", "DownButton", Left, 1870.0, NewValue::Inset(1870.0)),
-    edit!("BP/Controls/PlayerMenu/Collectibles/BP_ChloePhotoPosterUI.uasset", "UpButton", Left, 1870.0, NewValue::Inset(1870.0)),
-    edit!("BP/Controls/PlayerMenu/Collectibles/BP_ChloePhotoPosterUI.uasset", "DownButton", Left, 1870.0, NewValue::Inset(1870.0)),
-    edit!("BP/Controls/PlayerMenu/Collectibles/BP_IrisPhotoPosterUI.uasset", "UpButton", Left, 1870.0, NewValue::Inset(1870.0)),
-    edit!("BP/Controls/PlayerMenu/Collectibles/BP_IrisPhotoPosterUI.uasset", "DownButton", Left, 1870.0, NewValue::Inset(1870.0)),
     // --- full-bleed 16:9 compositions: re-inset so they keep their authored
     //     framing instead of riding out to the physical screen edges
     edit!("BP/Window/BP_MainMenuWindow.uasset", "MainButtons", Left, 220.0, NewValue::Inset(220.0)),
@@ -149,6 +143,7 @@ macro_rules! reslot {
 /// window's black shows either side. 13l: the 16:9 pictures that are
 /// stretched across the widened `WindowParent` go into the same band, and
 /// the 3840-wide backgrounds pinned to its left edge move to the band's.
+/// 13m: the ending montage's background, auto-sized at the left edge.
 static REUNION_RESLOTS: &[Reslot] = &[
     reslot!(
         "BP/Window/BP_VideoWindow.uasset",
@@ -158,8 +153,14 @@ static REUNION_RESLOTS: &[Reslot] = &[
         [NewValue::Inset(0.0), NewValue::Value(0.0), NewValue::Inset(0.0), NewValue::Value(-1.0)]
     ),
     reslot!("BP/Window/BP_ImageWindow.uasset", "FullscreenImage", "MainPanel", STRETCH, BAND),
-    reslot!("BP/Controls/PlayerMenu/Journal/BP_JournalTabUI.uasset", "JournalBackground", "MainPanel", STRETCH, BAND),
-    reslot!("BP/Controls/PlayerMenu/Journal/BP_JournalTabUI.uasset", "ContentPanel", "MainPanel", STRETCH, BAND),
+    reslot!(
+        "BP/Window/BP_MontageWindow.uasset",
+        "Background",
+        "MainPanel",
+        [0.0, 0.0, 3840.0, 2160.0],
+        [NewValue::Inset(0.0), NewValue::Value(0.0), NewValue::Value(3840.0), NewValue::Value(2160.0)]
+    ),
+    reslot!("BP/Window/BP_MontageWindow.uasset", "BP_InputButtonBar", "MainPanel", STRETCH, BAND),
     reslot!("BP/Controls/Pages/EP7_S5_A_Laptop/BP_EP7_S5_A_MsgBoard.uasset", "D9Image", "MainPanel", PINNED, PINNED_CENTRED),
     reslot!("BP/Window/BP_EP7_S5_A_LaptopWindow.uasset", "InputButtonBarOverride", "MainPanel", STRETCH, BAND),
     reslot!("BP/Controls/Pages/EP7_S3_A_Computer/BP_EP7_S3_A_Desktop.uasset", "D9Image", "MainPanel", PINNED, PINNED_CENTRED),
